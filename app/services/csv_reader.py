@@ -25,14 +25,28 @@ class Bbox:
 
 
 def _leer_csv(filepath: str) -> pd.DataFrame:
-    """Lee un CSV DENUE ignorando el BOM y devuelve un DataFrame crudo."""
-    return pd.read_csv(
-        filepath,
+    """
+    Lee un CSV DENUE y devuelve un DataFrame crudo.
+
+    Los archivos DENUE del INEGI están en Latin-1 / Windows-1252.
+    Se intenta primero UTF-8-BOM (por si algún archivo fue re-exportado),
+    y en caso de fallo de encoding se reintenta con latin-1, que acepta
+    todos los valores de byte (0x00-0xFF) sin excepción.
+    """
+    common_kwargs: dict = dict(
         header=0,
         dtype=str,
-        encoding="utf-8-sig",
         low_memory=False,
         on_bad_lines="skip",
+    )
+    for enc in ("utf-8-sig", "latin-1"):
+        try:
+            return pd.read_csv(filepath, encoding=enc, **common_kwargs)
+        except UnicodeDecodeError:
+            continue
+    # Último recurso: latin-1 con errors="replace" nunca lanza UnicodeDecodeError
+    return pd.read_csv(
+        filepath, encoding="latin-1", encoding_errors="replace", **common_kwargs
     )
 
 
