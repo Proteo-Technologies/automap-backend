@@ -1,0 +1,16 @@
+services:
+  - type: web
+    name: automap-backend
+    runtime: docker
+    dockerfilePath: ./Dockerfile
+    envVars:
+      - key: PORT
+        value: 8000
+      - key: DATA_DIR
+        value: /app/DB
+      - key: ALLOWED_ORIGINS
+        sync: false   # definir en el dashboard con la URL de Vercel
+    disk:
+      name: denue-data
+      mountPath: /app/DB
+      sizeGB: 5
