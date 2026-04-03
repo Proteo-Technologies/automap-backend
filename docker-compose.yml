@@ -1,0 +1,40 @@
+# Nombre del proyecto (prefijo de red/volúmenes). Contenedores: automap-postgres y automap-api.
+name: automap
+
+services:
+  db:
+    container_name: automap-postgres
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: automap
+      POSTGRES_PASSWORD: automap
+      POSTGRES_DB: automap
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    ports:
+      - "5432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U automap -d automap"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  api:
+    container_name: automap-api
+    build: .
+    ports:
+      - "8000:8000"
+    environment:
+      DATABASE_URL: postgresql+asyncpg://automap:automap@db:5432/automap
+      JWT_SECRET: ${JWT_SECRET:-dev-cambiar-en-produccion-minimo-32-caracteres}
+      DATA_DIR: /app/DB
+      # Incluye 3001 por si Next.js usa otro puerto; personaliza con .env
+      ALLOWED_ORIGINS: ${ALLOWED_ORIGINS:-http://localhost:3000,http://localhost:3001,http://127.0.0.1:3000,http://127.0.0.1:3001}
+    volumes:
+      - ./DB:/app/DB
+    depends_on:
+      db:
+        condition: service_healthy
+
+volumes:
+  pgdata:

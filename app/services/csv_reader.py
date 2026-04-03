@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import os
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Optional
 
 import pandas as pd
@@ -22,6 +23,32 @@ class Bbox:
     max_lat: float
     min_lon: float
     max_lon: float
+
+
+def list_denue_csv_basenames(data_dir: str) -> list[str]:
+    """
+    Lista archivos `.csv` en `data_dir` (solo nombre de archivo, ordenados).
+    Sirve como catálogo de “capas” de datos DENUE en la API.
+    """
+    p = Path(data_dir)
+    if not p.is_dir():
+        return []
+    names = sorted(
+        x.name for x in p.iterdir() if x.is_file() and x.suffix.lower() == ".csv"
+    )
+    return names
+
+
+def filter_allowed_basenames(requested: list[str], allowed: list[str]) -> list[str]:
+    """Devuelve `requested` ∩ `allowed` (orden de aparición en `requested`)."""
+    allow = set(allowed)
+    out: list[str] = []
+    seen: set[str] = set()
+    for x in requested:
+        if x in allow and x not in seen:
+            out.append(x)
+            seen.add(x)
+    return out
 
 
 def _leer_csv(filepath: str) -> pd.DataFrame:
