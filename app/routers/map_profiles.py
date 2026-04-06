@@ -4,27 +4,20 @@ CRUD de tipos de mapa por usuario: nombre + simbologías visibles + CSV opcional
 from __future__ import annotations
 
 import os
-import re
 from uuid import UUID, uuid4
 
 from fastapi import APIRouter, HTTPException, status
 from sqlalchemy import delete, select
-from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.deps import CurrentUser, DbSession
-from app.models.orm import MapProfile, SymbologyProfile
+from app.models.orm import MapProfile
 from app.schemas.map_profiles import MapProfileCreate, MapProfilePublic, MapProfileUpdate
 from app.services.csv_reader import filter_allowed_basenames, list_denue_csv_basenames
+from app.services.map_profile_defaults import seed_default_map_profiles_for_user
 
 router = APIRouter(tags=["map-profiles"])
 
 DATA_DIR = os.getenv("DATA_DIR", "./DB")
-
-_UUID_STR_RE = re.compile(
-    r"^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$",
-    re.IGNORECASE,
-)
-
 
 def _all_csv_basenames() -> list[str]:
     files = list_denue_csv_basenames(DATA_DIR)
@@ -54,39 +47,18 @@ def _validate_csv_layers(csv_layers: list[str]) -> list[str]:
     return filter_allowed_basenames(csv_layers, allowed)
 
 
-async def _validate_symbology_ids(
-    db: AsyncSession, user_id: UUID, ids: list[UUID]
-) -> list[str]:
-    if not ids:
-        return []
-    seen: set[UUID] = set()
-    ordered: list[UUID] = []
-    for i in ids:
-        if i not in seen:
-            seen.add(i)
-            ordered.append(i)
-    r = await db.execute(
-        select(SymbologyProfile.id).where(
-            SymbologyProfile.user_id == user_id,
-            SymbologyProfile.id.in_(ordered),
-        )
-    )
-    found = {row[0] for row in r.all()}
-    missing = [str(i) for i in ordered if i not in found]
-    if missing:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail=f"Simbología no encontrada o no es tuya: {', '.join(missing)}",
-        )
-    return [str(i) for i in ordered]
-
-
-def _symbology_ids_from_layers(mp: MapProfile) -> list[str]:
+def _ue_layers_from_profile(mp: MapProfile) -> list[str]:
     raw = mp.layers if isinstance(mp.layers, list) else []
     out: list[str] = []
+    seen: set[str] = set()
     for x in raw:
-        if isinstance(x, str) and _UUID_STR_RE.match(x.strip()):
-            out.append(x.strip().lower())
+        if not isinstance(x, str):
+            continue
+        v = x.strip()
+        if not v or v in seen:
+            continue
+        seen.add(v)
+        out.append(v)
     return out
 
 
@@ -109,7 +81,7 @@ def _public(mp: MapProfile) -> MapProfilePublic:
         id=mp.id,
         user_id=mp.user_id,
         name=mp.name,
-        symbology_profile_ids=_symbology_ids_from_layers(mp),
+        ue_layers=_ue_layers_from_profile(mp),
         csv_layers=csv_layers,
         map_vista=mp.map_vista or "denue_general",
         created_at=mp.created_at,
@@ -134,14 +106,14 @@ async def create_profile(
     user: CurrentUser,
     db: DbSession,
 ) -> MapProfilePublic:
-    sym_strings = await _validate_symbology_ids(db, user.id, list(body.symbology_profile_ids))
+    layers = [x.strip() for x in body.ue_layers if x.strip()]
     csv_src = [] if body.csv_layers is None else list(body.csv_layers)
     csv_ok = _validate_csv_layers(csv_src)
     mp = MapProfile(
         id=uuid4(),
         user_id=user.id,
         name=body.name.strip(),
-        layers=sym_strings,
+        layers=layers,
         csv_layers=csv_ok,
         map_vista="denue_general",
     )
@@ -163,19 +135,11 @@ async def seed_defaults(user: CurrentUser, db: DbSession) -> list[MapProfilePubl
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Ya tienes perfiles. Elimínalos primero o crea tipos manualmente.",
         )
-    csv_all = _all_csv_basenames()
-    mp = MapProfile(
-        id=uuid4(),
-        user_id=user.id,
-        name="Unidades económicas (plantilla)",
-        layers=[],
-        csv_layers=list(csv_all),
-        map_vista="denue_general",
-    )
-    db.add(mp)
+    created = await seed_default_map_profiles_for_user(db, user.id)
     await db.commit()
-    await db.refresh(mp)
-    return [_public(mp)]
+    for mp in created:
+        await db.refresh(mp)
+    return [_public(mp) for mp in created]
 
 
 @router.get("/{profile_id}", response_model=MapProfilePublic)
@@ -202,15 +166,10 @@ async def update_profile(
         raise HTTPException(status_code=404, detail="Perfil no encontrado")
     if body.name is not None:
         mp.name = body.name.strip()
-    if body.symbology_profile_ids is not None:
-        sym_strings = await _validate_symbology_ids(
-            db, user.id, list(body.symbology_profile_ids)
-        )
-        mp.layers = sym_strings
-        mp.map_vista = "denue_general"
+    if body.ue_layers is not None:
+        mp.layers = [x.strip() for x in body.ue_layers if x.strip()]
     if body.csv_layers is not None:
         mp.csv_layers = _validate_csv_layers(list(body.csv_layers))
-        mp.map_vista = "denue_general"
     await db.commit()
     await db.refresh(mp)
     return _public(mp)

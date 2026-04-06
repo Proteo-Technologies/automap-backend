@@ -129,7 +129,19 @@ def filtrar_por_bbox(
         )
         mask = mask & prefix_mask
 
-    resultado = df[mask].head(limit)
+    masked = df[mask]
+    n = len(masked)
+    if n <= limit:
+        resultado = masked
+    elif prefijos is not None:
+        # Con filtro por prefijos (p. ej. riesgos/rutas) se mantiene orden estable.
+        resultado = masked.head(limit)
+    else:
+        # Sin prefijos, `head(limit)` devolvía siempre las mismas filas iniciales del CSV
+        # (muchas gasolineras/industria) y otras actividades quedaban en 0 en el cliente.
+        # Muestra reproducible para mezclar actividades dentro del bbox.
+        resultado = masked.sample(n=limit, random_state=42)
+
     return resultado[["lat", "lon", "codigo_act", "nombre_act"]].to_dict(
         orient="records"
     )

@@ -19,6 +19,7 @@ from app.core.security import create_access_token, hash_password, verify_passwor
 from app.deps import CurrentUser, DbSession
 from app.models.orm import User
 from app.schemas.auth import Token, UserCreate, UserLogin, UserPublic
+from app.services.map_profile_defaults import seed_default_map_profiles_for_user
 
 router = APIRouter(tags=["auth"])
 _log = logging.getLogger(__name__)
@@ -43,6 +44,8 @@ async def register(request: Request, body: UserCreate, db: DbSession) -> User:
         hashed = await asyncio.to_thread(hash_password, body.password)
         user = User(email=email_norm, hashed_password=hashed)
         db.add(user)
+        await db.flush()
+        await seed_default_map_profiles_for_user(db, user.id)
         await db.commit()
         await db.refresh(user)
         return user

@@ -9,9 +9,9 @@ from pydantic import BaseModel, Field
 
 class MapProfileCreate(BaseModel):
     name: str = Field(..., min_length=1, max_length=200)
-    symbology_profile_ids: list[UUID] = Field(
+    ue_layers: list[str] = Field(
         default_factory=list,
-        description="Plantillas de simbología visibles con este tipo de mapa (orden conservado).",
+        description="Capas UE (categorías) visibles con este tipo de mapa.",
     )
     csv_layers: list[str] | None = Field(
         default=None,
@@ -21,7 +21,7 @@ class MapProfileCreate(BaseModel):
 
 class MapProfileUpdate(BaseModel):
     name: str | None = Field(default=None, min_length=1, max_length=200)
-    symbology_profile_ids: list[UUID] | None = None
+    ue_layers: list[str] | None = None
     csv_layers: list[str] | None = None
 
 
@@ -31,7 +31,7 @@ class MapProfilePublic(BaseModel):
     id: UUID
     user_id: UUID
     name: str
-    symbology_profile_ids: list[str]
+    ue_layers: list[str]
     csv_layers: list[str]
     map_vista: str
     created_at: datetime
