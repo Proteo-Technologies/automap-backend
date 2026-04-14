@@ -13,6 +13,7 @@ from app.services.csv_reader import (
     Bbox,
     filter_allowed_basenames,
     filtrar_por_bbox,
+    list_supported_categories,
     list_denue_csv_basenames,
 )
 
@@ -54,6 +55,20 @@ async def list_capas_denue():
     }
 
 
+@router.get("/unidades-economicas/categorias")
+async def list_categorias_denue():
+    """
+    Catálogo de categorías simplificadas para simbología en frontend.
+    """
+    cats = list_supported_categories()
+    return {
+        "categorias": [
+            {"id": c, "label": c.replace("_", " ").title()}
+            for c in cats
+        ]
+    }
+
+
 @router.get("/unidades-economicas")
 async def get_unidades_economicas(
     minLat: float = Query(...),
@@ -62,6 +77,10 @@ async def get_unidades_economicas(
     maxLon: float = Query(...),
     limit: int = Query(default=800, ge=1, le=MAX_LIMIT),
     codigos: Optional[str] = Query(default=None),
+    modoCodigos: str = Query(
+        default="prefix",
+        description='Modo de filtro para `codigos`: "prefix" o "exact".',
+    ),
     archivos: Optional[str] = Query(
         default=None,
         description="CSV a consultar, separados por coma (basenames). Vacío = todos.",
@@ -79,13 +98,42 @@ async def get_unidades_economicas(
         prefijos = [c.strip() for c in codigos.split(",") if c.strip()]
 
     files_to_read = _resolve_files(archivos)
+    modo_codigos = (modoCodigos or "prefix").strip().lower()
+    if modo_codigos not in ("prefix", "exact"):
+        modo_codigos = "prefix"
+
     results: list[dict] = []
-    for filename in files_to_read:
-        remaining = limit - len(results)
-        if remaining <= 0:
-            break
-        filepath = os.path.join(DATA_DIR, filename)
-        partial = filtrar_por_bbox(filepath, bbox, remaining, prefijos)
-        results.extend(partial)
+    n_files = len(files_to_read)
+    if n_files == 0:
+        return {"data": [], "total": 0}
+
+    # Repartir cupo entre CSV: aplica con y sin `codigos`.
+    # Antes, con prefijos el primer archivo llenaba `limit` y el resto de capas
+    # no se consultaba (p. ej. gasolineras solo en el segundo CSV).
+    if n_files > 1:
+        base = max(1, limit // n_files)
+        rema = max(0, limit - (base * n_files))
+        for idx, filename in enumerate(files_to_read):
+            per_file_limit = base + (1 if idx < rema else 0)
+            filepath = os.path.join(DATA_DIR, filename)
+            partial = filtrar_por_bbox(
+                filepath,
+                bbox,
+                per_file_limit,
+                prefijos,
+                modo_codigos=modo_codigos,
+            )
+            results.extend(partial)
+        if len(results) > limit:
+            results = results[:limit]
+    else:
+        filepath = os.path.join(DATA_DIR, files_to_read[0])
+        results = filtrar_por_bbox(
+            filepath,
+            bbox,
+            limit,
+            prefijos,
+            modo_codigos=modo_codigos,
+        )
 
     return {"data": results, "total": len(results)}
