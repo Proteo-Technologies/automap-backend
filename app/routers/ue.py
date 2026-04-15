@@ -6,21 +6,75 @@ from __future__ import annotations
 
 import os
 from typing import Optional
+from uuid import UUID
 
-from fastapi import APIRouter, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
+from sqlalchemy import delete, select
 
+from app.core.security import decode_token
+from app.db.session import db_configured, get_session_factory
+from app.deps import CurrentUser, DbSession
+from app.models.orm import UeException
+from app.schemas.ue_exceptions import UeExceptionCreate, UeExceptionPublic
 from app.services.csv_reader import (
     Bbox,
     filter_allowed_basenames,
     filtrar_por_bbox,
-    list_supported_categories,
     list_denue_csv_basenames,
+    list_supported_categories,
 )
 
 router = APIRouter()
+security = HTTPBearer(auto_error=False)
 
 DATA_DIR = os.getenv("DATA_DIR", "./DB")
 MAX_LIMIT = 5000
+
+
+def _build_ue_key(
+    lat: float,
+    lon: float,
+    codigo_act: str,
+    nombre_act: str,
+    nom_estab: str,
+) -> str:
+    lat_key = f"{lat:.6f}"
+    lon_key = f"{lon:.6f}"
+    return "|".join(
+        [
+            lat_key,
+            lon_key,
+            (codigo_act or "").strip().lower(),
+            (nombre_act or "").strip().lower(),
+            (nom_estab or "").strip().lower(),
+        ]
+    )
+
+
+def _ue_key_from_dict(item: dict) -> str:
+    return _build_ue_key(
+        float(item.get("lat", 0.0)),
+        float(item.get("lon", 0.0)),
+        str(item.get("codigo_act", "")),
+        str(item.get("nombre_act", "")),
+        str(item.get("nom_estab", "")),
+    )
+
+
+def _user_id_from_credentials(credentials: HTTPAuthorizationCredentials | None):
+    if credentials is None:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Falta Authorization: Bearer <token> para incluir excepciones UE.",
+        )
+    uid = decode_token(credentials.credentials)
+    if uid is None:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Token inválido o expirado.",
+        )
+    return uid
 
 
 def _allowed_csv_files() -> list[str]:
@@ -69,6 +123,86 @@ async def list_categorias_denue():
     }
 
 
+@router.get(
+    "/unidades-economicas/excepciones",
+    response_model=list[UeExceptionPublic],
+)
+async def list_ue_excepciones(
+    user: CurrentUser,
+    db: DbSession,
+) -> list[UeException]:
+    result = await db.execute(
+        select(UeException)
+        .where(UeException.user_id == user.id)
+        .order_by(UeException.created_at.desc())
+    )
+    return list(result.scalars().all())
+
+
+@router.post(
+    "/unidades-economicas/excepciones",
+    response_model=UeExceptionPublic,
+    status_code=status.HTTP_201_CREATED,
+)
+async def create_ue_excepcion(
+    body: UeExceptionCreate,
+    user: CurrentUser,
+    db: DbSession,
+) -> UeException:
+    ue_key = _build_ue_key(
+        body.lat,
+        body.lon,
+        body.codigo_act,
+        body.nombre_act,
+        body.nom_estab,
+    )
+    existing = await db.execute(
+        select(UeException).where(
+            UeException.user_id == user.id,
+            UeException.ue_key == ue_key,
+        )
+    )
+    found = existing.scalar_one_or_none()
+    if found is not None:
+        return found
+
+    item = UeException(
+        user_id=user.id,
+        ue_key=ue_key,
+        lat=body.lat,
+        lon=body.lon,
+        codigo_act=body.codigo_act.strip(),
+        nombre_act=body.nombre_act.strip(),
+        nom_estab=body.nom_estab.strip(),
+        categoria=(body.categoria or "otros").strip() or "otros",
+        source_file=(body.source_file.strip() if body.source_file else None),
+    )
+    db.add(item)
+    await db.commit()
+    await db.refresh(item)
+    return item
+
+
+@router.delete(
+    "/unidades-economicas/excepciones/{exception_id}",
+    status_code=status.HTTP_204_NO_CONTENT,
+)
+async def delete_ue_excepcion(
+    exception_id: UUID,
+    user: CurrentUser,
+    db: DbSession,
+) -> None:
+    res = await db.execute(
+        delete(UeException).where(
+            UeException.id == exception_id,
+            UeException.user_id == user.id,
+        )
+    )
+    if res.rowcount == 0:
+        raise HTTPException(status_code=404, detail="Excepción UE no encontrada")
+    await db.commit()
+
+
 @router.get("/unidades-economicas")
 async def get_unidades_economicas(
     minLat: float = Query(...),
@@ -85,6 +219,11 @@ async def get_unidades_economicas(
         default=None,
         description="CSV a consultar, separados por coma (basenames). Vacío = todos.",
     ),
+    incluirExcepciones: bool = Query(
+        default=False,
+        description="Si es true, agrega UEs excepcion del usuario aunque queden fuera del bbox.",
+    ),
+    credentials: HTTPAuthorizationCredentials | None = Depends(security),
 ):
     bbox = Bbox(
         min_lat=min(minLat, maxLat),
@@ -135,5 +274,46 @@ async def get_unidades_economicas(
             prefijos,
             modo_codigos=modo_codigos,
         )
+
+    if not incluirExcepciones:
+        return {"data": results, "total": len(results)}
+
+    if not db_configured():
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Base de datos no configurada para consultar excepciones UE.",
+        )
+
+    user_id = _user_id_from_credentials(credentials)
+    factory = get_session_factory()
+    if factory is None:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Base de datos no disponible.",
+        )
+
+    async with factory() as session:
+        db_rows = await session.execute(
+            select(UeException).where(UeException.user_id == user_id)
+        )
+        excepciones = list(db_rows.scalars().all())
+
+    seen = {_ue_key_from_dict(x) for x in results}
+    for ex in excepciones:
+        ue = {
+            "lat": ex.lat,
+            "lon": ex.lon,
+            "codigo_act": ex.codigo_act,
+            "nombre_act": ex.nombre_act,
+            "nom_estab": ex.nom_estab,
+            "categoria": ex.categoria or "otros",
+            "source_file": ex.source_file,
+            "is_exception": True,
+        }
+        k = _ue_key_from_dict(ue)
+        if k in seen:
+            continue
+        seen.add(k)
+        results.append(ue)
 
     return {"data": results, "total": len(results)}

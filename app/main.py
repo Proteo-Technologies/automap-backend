@@ -104,6 +104,7 @@ async def root():
         "endpoints": [
             "/api/unidades-economicas",
             "/api/unidades-economicas/capas",
+            "/api/unidades-economicas/excepciones",
             "/api/ruta",
             "/api/health",
             "/api/auth/register",

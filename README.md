@@ -6,7 +6,7 @@ API en Python/FastAPI para el proyecto Mapa del Entorno. Expone endpoints para f
 
 | Método | Ruta                          | Descripción                                                               |
 |--------|-------------------------------|---------------------------------------------------------------------------|
-| GET    | `/api/unidades-economicas`    | UEs DENUE dentro de un bbox. Query: `minLat`, `minLon`, `maxLat`, `maxLon`, `limit` (default 800), `codigos` (opcional, prefijos separados por coma) |
+| GET    | `/api/unidades-economicas`    | UEs DENUE dentro de un bbox. Query: `minLat`, `minLon`, `maxLat`, `maxLon`, `limit` (default 800), `codigos` (opcional), `incluirExcepciones` (opcional, requiere Bearer) |
 | GET    | `/api/ruta`                   | Ruta entre dos puntos via Valhalla. Query: `latOrigen`, `lonOrigen`, `latDest`, `lonDest` |
 | GET    | `/api/health`                 | Estado del servidor y disponibilidad de datos                             |
 | GET    | `/docs`                       | Documentación interactiva (Swagger UI)                                    |
@@ -22,10 +22,14 @@ Con `DATABASE_URL` configurada: registro, login (JWT), mapas/borradores (`config
 | GET | `/api/auth/me` | Bearer | Perfil del usuario |
 | GET/POST | `/api/maps` | Bearer | Listar / crear proyectos de mapa |
 | GET/PATCH/DELETE | `/api/maps/{id}` | Bearer | Ver / actualizar / borrar |
+| GET | `/api/map-profiles/global-actions` | Bearer | Acciones globales disponibles para cualquier mapa (`accion_poligono_predio`, `accion_puntos_reunion`) |
+| GET | `/api/map-profiles/options` | Bearer | Opciones de configuración para crear tipo de mapa (`modo_ruta`, `modo_simbologia`) |
 | GET/POST | `/api/buffer-presets` | Bearer | Presets de buffers |
 | PATCH/DELETE | `/api/buffer-presets/{id}` | Bearer | Editar / borrar preset |
 | GET/POST | `/api/symbology-profiles` | Bearer | Plantillas de simbología (`rules` JSON) |
 | GET/PATCH/DELETE | `/api/symbology-profiles/{id}` | Bearer | Ver / editar / borrar |
+| GET/POST | `/api/unidades-economicas/excepciones` | Bearer | Listar / crear UEs excepción (se muestran fuera del buffer) |
+| DELETE | `/api/unidades-economicas/excepciones/{id}` | Bearer | Eliminar UE excepción |
 
 En Swagger: **Authorize** → pegar el token (sin prefijo `Bearer ` si la UI ya lo añade; si no, `Bearer <token>`).
 

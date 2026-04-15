@@ -11,16 +11,35 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.models.orm import MapProfile
 from app.services.csv_reader import list_denue_csv_basenames
 
-# Nombre visible + comportamiento base del mapa.
+# Nombre visible + comportamiento base del mapa (solo rutas operativas).
 DEFAULT_MAP_PROFILES: list[tuple[str, str]] = [
-    ("Poligonal del predio", "poligono_predio"),
-    ("Riesgos externos (simbología)", "riesgos_simbologia"),
-    ("Riesgos externos (numero)", "riesgos_numero"),
-    ("Servicio de emergencias", "rutas_emergencia"),
-    ("Rutas de acceso a emergencia", "rutas_acceso"),
-    ("Puntos de reunión", "puntos_reunion"),
-    ("Zonas de mayor riesgo", "zonas_mayor_riesgo"),
+    ("UE -> punto de coordenadas (3 rutas)", "ruta_ue_a_coordenada"),
+    ("Punto de coordenadas -> UE", "ruta_coordenada_a_ue"),
+    ("Punto de reunion -> UE", "ruta_reunion_a_ue"),
+    ("Punto de coordenadas <-> UE", "ruta_coordenada_ue_ida_vuelta"),
 ]
+
+# Acciones globales de UI (no son mapas/perfiles específicos).
+DEFAULT_GLOBAL_MAP_ACTIONS: tuple[str, ...] = (
+    "accion_poligono_predio",
+    "accion_puntos_reunion",
+    "accion_riesgos_simbologia",
+    "accion_riesgos_numero",
+)
+
+# Opciones para creación/edición de tipos de mapa en frontend.
+DEFAULT_ROUTE_MAP_MODES: tuple[str, ...] = (
+    "normal",
+    "ruta_ue_a_coordenada",
+    "ruta_coordenada_a_ue",
+    "ruta_reunion_a_ue",
+    "ruta_coordenada_ue_ida_vuelta",
+)
+DEFAULT_SYMBOLOGY_MODES: tuple[str, ...] = (
+    "normal",
+    "simbologia",
+    "numero",
+)
 
 
 def _default_csv_layers() -> list[str]:
