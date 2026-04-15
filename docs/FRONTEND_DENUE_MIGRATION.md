@@ -51,6 +51,10 @@ Ejemplo:
 ## Categorias simplificadas actuales
 
 - `bomberos`
+- `almacen_sustancias_peligrosas`
+- `recicladoras`
+- `restaurantes`
+- `gaseras`
 - `industria`
 - `escuelas`
 - `hospitales`
@@ -59,16 +63,23 @@ Ejemplo:
 - `museos`
 - `gasolineras`
 - `policia`
-- `gobierno`
+- `oficinas`
 - `otros`
 
 Nota: frontend debe leer el catalogo en runtime usando `GET /api/unidades-economicas/categorias`.
+
+### Codigos SCIAN usados para nuevas categorias
+
+- `almacen_sustancias_peligrosas`: `49319`
+- `recicladoras`: `56292`, `43422`, `434311`, `434312`, `434313`
+- `restaurantes`: `722`
+- `gaseras`: `468413`, `468414`
 
 ## Como se calcula `categoria` (backend)
 
 - Casi siempre por **`codigo_act` (SCIAN)** con prefijos definidos en backend.
 - **No** se usa el nombre del establecimiento para “adivinar” categoria (evita falsos positivos como nombres comerciales con “Bomberos”).
-- Excepcion: codigo **931412** (orden publico / seguridad); ahi el nombre ayuda a distinguir `bomberos` / `policia` / `gobierno`.
+- Excepcion: codigo **931412** (orden publico / seguridad); ahi el nombre ayuda a distinguir `bomberos` / `policia` / `oficinas`.
 
 ## Logica que frontend debe eliminar
 

@@ -21,6 +21,14 @@ import pandas as pd
 SCIAN_CATEGORY_RULES: list[tuple[str, tuple[str, ...]]] = [
     # Combustibles al por menor (SCIAN 46841x); no incluye 468211 autopartes, etc.
     ("gasolineras", ("468411", "468412", "468419")),
+    # Gas LP / gaseras (cilindros, tanques estacionarios y similares).
+    ("gaseras", ("468413", "468414")),
+    # Restaurantes y servicios de preparación de alimentos.
+    ("restaurantes", ("722",)),
+    # Reciclaje y acopio/recuperación de materiales.
+    ("recicladoras", ("56292", "43422", "434311", "434312", "434313")),
+    # Almacenamiento especializado para sustancias o materiales de riesgo.
+    ("almacen_sustancias_peligrosas", ("49319",)),
     ("museos", ("71211", "71212", "71213", "71219")),
     ("iglesias", ("81321",)),
     ("hospitales", ("622",)),
@@ -35,6 +43,10 @@ FALLBACK_CATEGORY = "otros"
 CATEGORY_DISPLAY_ORDER: tuple[str, ...] = (
     "bomberos",
     "policia",
+    "almacen_sustancias_peligrosas",
+    "recicladoras",
+    "restaurantes",
+    "gaseras",
     "industria",
     "escuelas",
     "hospitales",
@@ -42,7 +54,7 @@ CATEGORY_DISPLAY_ORDER: tuple[str, ...] = (
     "iglesias",
     "museos",
     "gasolineras",
-    "gobierno",
+    "oficinas",
     "otros",
 )
 
@@ -74,7 +86,7 @@ def _refine_orden_publico_931412(nom_estab: str, nombre_act: str) -> str:
         return "bomberos"
     if "policia" in label:
         return "policia"
-    return "gobierno"
+    return "oficinas"
 
 
 def _classify_ue(codigo_act: str, nombre_act: str, nom_estab: str) -> str:
@@ -94,7 +106,7 @@ def _classify_ue(codigo_act: str, nombre_act: str, nom_estab: str) -> str:
     if code.startswith("93141"):
         return "policia"
     if code.startswith("93"):
-        return "gobierno"
+        return "oficinas"
 
     return FALLBACK_CATEGORY
 
