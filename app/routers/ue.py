@@ -4,6 +4,7 @@ Filtra registros DENUE por bounding box, prefijos de codigo_act y archivos fuent
 """
 from __future__ import annotations
 
+import asyncio
 import os
 from typing import Optional
 from uuid import UUID
@@ -340,16 +341,20 @@ async def get_unidades_economicas(
     if n_files > 1:
         base = max(1, limit // n_files)
         rema = max(0, limit - (base * n_files))
-        for idx, filename in enumerate(files_to_read):
+
+        async def _bbox_one(idx: int) -> list[dict]:
             per_file_limit = base + (1 if idx < rema else 0)
-            filepath = os.path.join(DATA_DIR, filename)
-            partial = filtrar_por_bbox(
+            filepath = os.path.join(DATA_DIR, files_to_read[idx])
+            return await asyncio.to_thread(
+                filtrar_por_bbox,
                 filepath,
                 bbox,
                 per_file_limit,
                 prefijos,
-                modo_codigos=modo_codigos,
+                modo_codigos,
             )
+
+        for partial in await asyncio.gather(*(_bbox_one(i) for i in range(n_files))):
             results.extend(partial)
         if len(results) > limit:
             results = results[:limit]
@@ -382,20 +387,30 @@ async def get_unidades_economicas(
 
     seen = {_ue_key_from_dict(x) for x in results}
 
-    async with factory() as session:
-        rows_cat = await session.execute(
-            select(UeCategoryException).where(UeCategoryException.user_id == user_id)
-        )
-        categorias_exc = {
-            str(x.categoria).strip()
-            for x in rows_cat.scalars().all()
-            if x.categoria
-        }
+    async def _load_category_exceptions() -> set[str]:
+        async with factory() as session:
+            rows_cat = await session.execute(
+                select(UeCategoryException).where(
+                    UeCategoryException.user_id == user_id
+                )
+            )
+            return {
+                str(x.categoria).strip()
+                for x in rows_cat.scalars().all()
+                if x.categoria
+            }
 
-        rows_ue = await session.execute(
-            select(UeException).where(UeException.user_id == user_id)
-        )
-        excepciones_ue = list(rows_ue.scalars().all())
+    async def _load_point_exceptions() -> list[UeException]:
+        async with factory() as session:
+            rows_ue = await session.execute(
+                select(UeException).where(UeException.user_id == user_id)
+            )
+            return list(rows_ue.scalars().all())
+
+    categorias_exc, excepciones_ue = await asyncio.gather(
+        _load_category_exceptions(),
+        _load_point_exceptions(),
+    )
 
     # 1) Todas las UEs de categorías marcadas, fuera del bbox (mismo filtro codigos/archivos).
     if categorias_exc and limiteExcepcionesFuera > 0:
@@ -404,17 +419,23 @@ async def get_unidades_economicas(
             if n_files > 1:
                 base_e = max(1, limiteExcepcionesFuera // n_files)
                 rema_e = max(0, limiteExcepcionesFuera - (base_e * n_files))
-                for idx, filename in enumerate(files_to_read):
+
+                async def _extra_cat(idx: int) -> list[dict]:
                     per_lim = base_e + (1 if idx < rema_e else 0)
-                    filepath = os.path.join(DATA_DIR, filename)
-                    extra = filtrar_fuera_bbox_por_categorias(
+                    filepath = os.path.join(DATA_DIR, files_to_read[idx])
+                    return await asyncio.to_thread(
+                        filtrar_fuera_bbox_por_categorias,
                         filepath,
                         bbox,
                         cats_set,
                         per_lim,
                         prefijos,
-                        modo_codigos=modo_codigos,
+                        modo_codigos,
                     )
+
+                for extra in await asyncio.gather(
+                    *(_extra_cat(i) for i in range(n_files))
+                ):
                     for ue in extra:
                         k = _ue_key_from_dict(ue)
                         if k in seen:

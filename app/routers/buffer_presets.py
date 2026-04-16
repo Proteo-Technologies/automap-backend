@@ -39,6 +39,7 @@ async def create_preset(
         fill_color_hex=body.fill_color_hex,
         fill_opacity=body.fill_opacity,
         sort_order=body.sort_order,
+        is_enabled=body.is_enabled,
     )
     db.add(bp)
     await db.commit()

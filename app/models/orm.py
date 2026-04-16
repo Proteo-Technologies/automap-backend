@@ -159,6 +159,7 @@ class BufferPreset(Base):
     fill_color_hex: Mapped[str | None] = mapped_column(String(9), nullable=True)
     fill_opacity: Mapped[float | None] = mapped_column(nullable=True)
     sort_order: Mapped[int] = mapped_column(Integer, default=0)
+    is_enabled: Mapped[bool] = mapped_column(Boolean, default=True)
 
     owner: Mapped["User"] = relationship(back_populates="buffer_presets")
 

@@ -14,6 +14,7 @@ class BufferPresetCreate(BaseModel):
     )
     fill_opacity: float | None = Field(default=None, ge=0, le=1)
     sort_order: int = 0
+    is_enabled: bool = True
 
 
 class BufferPresetUpdate(BaseModel):
@@ -27,6 +28,7 @@ class BufferPresetUpdate(BaseModel):
     )
     fill_opacity: float | None = Field(default=None, ge=0, le=1)
     sort_order: int | None = None
+    is_enabled: bool | None = None
 
 
 class BufferPresetPublic(BaseModel):
@@ -38,5 +40,6 @@ class BufferPresetPublic(BaseModel):
     fill_color_hex: str | None
     fill_opacity: float | None
     sort_order: int
+    is_enabled: bool
 
     model_config = {"from_attributes": True}
