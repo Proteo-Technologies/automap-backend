@@ -51,6 +51,9 @@ class User(Base):
     ue_exceptions: Mapped[list["UeException"]] = relationship(
         back_populates="owner", cascade="all, delete-orphan"
     )
+    ue_category_exceptions: Mapped[list["UeCategoryException"]] = relationship(
+        back_populates="owner", cascade="all, delete-orphan"
+    )
 
 
 class MapProfile(Base):
@@ -185,3 +188,25 @@ class UeException(Base):
     )
 
     owner: Mapped["User"] = relationship(back_populates="ue_exceptions")
+
+
+class UeCategoryException(Base):
+    """Categorías cuyas UEs se muestran también fuera del bbox (buffer)."""
+
+    __tablename__ = "ue_category_exceptions"
+    __table_args__ = (
+        UniqueConstraint("user_id", "categoria", name="uq_ue_category_exception_user_cat"),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
+    )
+    user_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), index=True
+    )
+    categoria: Mapped[str] = mapped_column(String(120), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )
+
+    owner: Mapped["User"] = relationship(back_populates="ue_category_exceptions")

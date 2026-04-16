@@ -122,15 +122,17 @@ Nota: frontend debe leer el catalogo en runtime usando `GET /api/unidades-econom
 
 ## Excepciones UE fuera de buffer (nuevo)
 
-- Backend ahora permite guardar una lista de UEs excepción por usuario autenticado.
-- Endpoints:
-  - `GET /api/unidades-economicas/excepciones`
-  - `POST /api/unidades-economicas/excepciones`
+- Guía detallada para frontend: `docs/FRONTEND_UE_EXCEPCIONES.md`.
+- **Por categoría (recomendado):** el usuario marca categorías (ej. `hospitales`); al pedir UEs con `incluirExcepciones=true` se añaden todas las UEs de esas categorías que queden **fuera** del bbox (hasta `limiteExcepcionesFuera`).
+  - `GET/POST /api/unidades-economicas/excepciones-por-categoria`
+  - `DELETE /api/unidades-economicas/excepciones-por-categoria/{id}`
+- **Por UE puntual (legacy):** lista explícita de establecimientos.
+  - `GET/POST /api/unidades-economicas/excepciones`
   - `DELETE /api/unidades-economicas/excepciones/{id}`
-- Para que el endpoint principal incluya esas UEs aunque estén fuera del bbox/buffer:
-  - `GET /api/unidades-economicas?...&incluirExcepciones=true`
+- Endpoint principal:
+  - `GET /api/unidades-economicas?...&incluirExcepciones=true&limiteExcepcionesFuera=3000`
   - Requiere `Authorization: Bearer <token>`.
-- Las UEs excepción se mezclan con el resultado normal del bbox y no se duplican.
+- Las UEs extra se deduplican respecto al resultado del bbox.
 
 ## Rutas operativas y acciones globales
 
@@ -184,7 +186,15 @@ Nota: frontend debe leer el catalogo en runtime usando `GET /api/unidades-econom
 
 - Backend reforzo la extraccion de rutas alternativas de Valhalla (principal + alternas).
 - Para `ruta_ue_a_coordenada`, el backend solicita hasta 3 rutas y devuelve las disponibles en `rutas[]`.
-- Importante: aunque se pidan 3, el proveedor puede devolver menos si no encuentra alternativas suficientemente distintas.
+- Si Valhalla responde menos de 3 en el intento principal, backend hace intentos adicionales variando preferencias de costo vial para recuperar rutas distintas.
+- Si aun asi no se completan 3 rutas distintas, backend intenta rutas con desvio (waypoint intermedio) para ampliar opciones.
+- Contrato final para `ruta_ue_a_coordenada`: backend siempre responde `total = 3` y `rutas.length = 3`.
+- Se agrego optimizacion de calidad:
+  - desvíos intermedios mas cortos (evita rodeos muy grandes),
+  - filtro de rutas con rodeo extremo,
+  - filtro cuando el final queda demasiado lejos del punto de coordenadas solicitado.
+- Backend usa `radius` al map-matching de origen/destino para aterrizar la ruta a vialidad cercana cuando el punto cae en un lugar sin acceso vehicular directo.
+- **Diversidad entre las 3 rutas:** backend genera candidatos adicionales con puntos de llegada ligeramente desplazados alrededor del destino (para intentar accesos por calles distintas) y elige las 3 rutas con **menor solapamiento** entre sí (no solo las tres primeras que devuelve el motor).
 - Frontend debe renderizar **todas** las entradas de `rutas[]` y no asumir un maximo fijo.
 
 ### Validacion de punto de reunion (frontend)

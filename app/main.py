@@ -105,6 +105,7 @@ async def root():
             "/api/unidades-economicas",
             "/api/unidades-economicas/capas",
             "/api/unidades-economicas/excepciones",
+            "/api/unidades-economicas/excepciones-por-categoria",
             "/api/ruta",
             "/api/health",
             "/api/auth/register",

@@ -318,3 +318,68 @@ def filtrar_por_bbox(
     ].to_dict(
         orient="records"
     )
+
+
+def filtrar_fuera_bbox_por_categorias(
+    filepath: str,
+    bbox: Bbox,
+    categorias: set[str],
+    limit: int,
+    prefijos: Optional[list[str]] = None,
+    modo_codigos: str = "prefix",
+) -> list[dict]:
+    """
+    Registros del CSV que están **fuera** del bbox y cuya `categoria` está en `categorias`.
+    Respeta el mismo filtro por `codigo_act` que `filtrar_por_bbox` cuando `prefijos` no es vacío.
+    """
+    if not categorias or limit <= 0:
+        return []
+    if not os.path.exists(filepath):
+        return []
+
+    header_cols = _peek_csv_columns(filepath)
+    usecols = _usecols_para_denue(header_cols)
+    df = _leer_csv(filepath, usecols=usecols)
+    df = _normalizar(df)
+
+    mask_inside = (
+        (df["lat"] >= bbox.min_lat)
+        & (df["lat"] <= bbox.max_lat)
+        & (df["lon"] >= bbox.min_lon)
+        & (df["lon"] <= bbox.max_lon)
+    )
+    mask_outside = ~mask_inside
+
+    if prefijos:
+        codigos = [p.strip() for p in prefijos if p and p.strip()]
+        s = df["codigo_act"]
+        if modo_codigos == "exact":
+            code_mask = s.isin(codigos)
+        else:
+            code_mask = pd.Series(False, index=df.index)
+            for pfx in codigos:
+                code_mask = code_mask | s.str.startswith(pfx, na=False)
+        mask_outside = mask_outside & code_mask
+
+    sub = df[mask_outside]
+    if len(sub) == 0:
+        return []
+
+    sub = _agregar_categoria(sub)
+    sub = sub[sub["categoria"].isin(categorias)]
+    n = len(sub)
+    if n <= limit:
+        resultado = sub
+    elif prefijos:
+        # Misma lógica que `filtrar_por_bbox`: orden estable con filtro SCIAN.
+        resultado = sub.head(limit)
+    else:
+        resultado = sub.sample(n=limit, random_state=42)
+
+    out = resultado[
+        ["lat", "lon", "codigo_act", "nombre_act", "nom_estab", "categoria"]
+    ].to_dict(orient="records")
+    for row in out:
+        row["is_exception"] = True
+        row["exception_reason"] = "categoria_fuera_bbox"
+    return out

@@ -2,6 +2,10 @@ from app.schemas.auth import Token, UserCreate, UserLogin, UserPublic
 from app.schemas.buffers import BufferPresetCreate, BufferPresetPublic, BufferPresetUpdate
 from app.schemas.maps import MapProjectCreate, MapProjectPublic, MapProjectUpdate
 from app.schemas.symbology import SymbologyCreate, SymbologyPublic, SymbologyUpdate
+from app.schemas.ue_category_exceptions import (
+    UeCategoryExceptionCreate,
+    UeCategoryExceptionPublic,
+)
 from app.schemas.ue_exceptions import UeExceptionCreate, UeExceptionPublic
 
 __all__ = [
@@ -20,4 +24,6 @@ __all__ = [
     "SymbologyPublic",
     "UeExceptionCreate",
     "UeExceptionPublic",
+    "UeCategoryExceptionCreate",
+    "UeCategoryExceptionPublic",
 ]

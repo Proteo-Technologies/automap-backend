@@ -15,11 +15,16 @@ from sqlalchemy import delete, select
 from app.core.security import decode_token
 from app.db.session import db_configured, get_session_factory
 from app.deps import CurrentUser, DbSession
-from app.models.orm import UeException
+from app.models.orm import UeCategoryException, UeException
+from app.schemas.ue_category_exceptions import (
+    UeCategoryExceptionCreate,
+    UeCategoryExceptionPublic,
+)
 from app.schemas.ue_exceptions import UeExceptionCreate, UeExceptionPublic
 from app.services.csv_reader import (
     Bbox,
     filter_allowed_basenames,
+    filtrar_fuera_bbox_por_categorias,
     filtrar_por_bbox,
     list_denue_csv_basenames,
     list_supported_categories,
@@ -203,6 +208,83 @@ async def delete_ue_excepcion(
     await db.commit()
 
 
+def _validar_categoria_catalogo(categoria: str) -> str:
+    cat = (categoria or "").strip()
+    allowed = set(list_supported_categories())
+    if cat not in allowed:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Categoría no válida: {categoria}. Use GET /api/unidades-economicas/categorias.",
+        )
+    return cat
+
+
+@router.get(
+    "/unidades-economicas/excepciones-por-categoria",
+    response_model=list[UeCategoryExceptionPublic],
+)
+async def list_ue_excepciones_por_categoria(
+    user: CurrentUser,
+    db: DbSession,
+) -> list[UeCategoryException]:
+    result = await db.execute(
+        select(UeCategoryException)
+        .where(UeCategoryException.user_id == user.id)
+        .order_by(UeCategoryException.categoria.asc())
+    )
+    return list(result.scalars().all())
+
+
+@router.post(
+    "/unidades-economicas/excepciones-por-categoria",
+    response_model=UeCategoryExceptionPublic,
+    status_code=status.HTTP_201_CREATED,
+)
+async def create_ue_excepcion_por_categoria(
+    body: UeCategoryExceptionCreate,
+    user: CurrentUser,
+    db: DbSession,
+) -> UeCategoryException:
+    cat = _validar_categoria_catalogo(body.categoria)
+    existing = await db.execute(
+        select(UeCategoryException).where(
+            UeCategoryException.user_id == user.id,
+            UeCategoryException.categoria == cat,
+        )
+    )
+    found = existing.scalar_one_or_none()
+    if found is not None:
+        return found
+
+    item = UeCategoryException(user_id=user.id, categoria=cat)
+    db.add(item)
+    await db.commit()
+    await db.refresh(item)
+    return item
+
+
+@router.delete(
+    "/unidades-economicas/excepciones-por-categoria/{exception_id}",
+    status_code=status.HTTP_204_NO_CONTENT,
+)
+async def delete_ue_excepcion_por_categoria(
+    exception_id: UUID,
+    user: CurrentUser,
+    db: DbSession,
+) -> None:
+    res = await db.execute(
+        delete(UeCategoryException).where(
+            UeCategoryException.id == exception_id,
+            UeCategoryException.user_id == user.id,
+        )
+    )
+    if res.rowcount == 0:
+        raise HTTPException(
+            status_code=404, detail="Excepción por categoría no encontrada"
+        )
+    await db.commit()
+
+
 @router.get("/unidades-economicas")
 async def get_unidades_economicas(
     minLat: float = Query(...),
@@ -221,7 +303,13 @@ async def get_unidades_economicas(
     ),
     incluirExcepciones: bool = Query(
         default=False,
-        description="Si es true, agrega UEs excepcion del usuario aunque queden fuera del bbox.",
+        description="Si es true, agrega UEs por categoría y/o excepciones puntuales fuera del bbox.",
+    ),
+    limiteExcepcionesFuera: int = Query(
+        default=3000,
+        ge=0,
+        le=10000,
+        description="Tope de UEs extra fuera del bbox por categorías configuradas (0 = no agregar por categoría).",
     ),
     credentials: HTTPAuthorizationCredentials | None = Depends(security),
 ):
@@ -292,14 +380,66 @@ async def get_unidades_economicas(
             detail="Base de datos no disponible.",
         )
 
+    seen = {_ue_key_from_dict(x) for x in results}
+
     async with factory() as session:
-        db_rows = await session.execute(
+        rows_cat = await session.execute(
+            select(UeCategoryException).where(UeCategoryException.user_id == user_id)
+        )
+        categorias_exc = {
+            str(x.categoria).strip()
+            for x in rows_cat.scalars().all()
+            if x.categoria
+        }
+
+        rows_ue = await session.execute(
             select(UeException).where(UeException.user_id == user_id)
         )
-        excepciones = list(db_rows.scalars().all())
+        excepciones_ue = list(rows_ue.scalars().all())
 
-    seen = {_ue_key_from_dict(x) for x in results}
-    for ex in excepciones:
+    # 1) Todas las UEs de categorías marcadas, fuera del bbox (mismo filtro codigos/archivos).
+    if categorias_exc and limiteExcepcionesFuera > 0:
+        cats_set = {c for c in categorias_exc if c in set(list_supported_categories())}
+        if cats_set:
+            if n_files > 1:
+                base_e = max(1, limiteExcepcionesFuera // n_files)
+                rema_e = max(0, limiteExcepcionesFuera - (base_e * n_files))
+                for idx, filename in enumerate(files_to_read):
+                    per_lim = base_e + (1 if idx < rema_e else 0)
+                    filepath = os.path.join(DATA_DIR, filename)
+                    extra = filtrar_fuera_bbox_por_categorias(
+                        filepath,
+                        bbox,
+                        cats_set,
+                        per_lim,
+                        prefijos,
+                        modo_codigos=modo_codigos,
+                    )
+                    for ue in extra:
+                        k = _ue_key_from_dict(ue)
+                        if k in seen:
+                            continue
+                        seen.add(k)
+                        results.append(ue)
+            else:
+                filepath = os.path.join(DATA_DIR, files_to_read[0])
+                extra = filtrar_fuera_bbox_por_categorias(
+                    filepath,
+                    bbox,
+                    cats_set,
+                    limiteExcepcionesFuera,
+                    prefijos,
+                    modo_codigos=modo_codigos,
+                )
+                for ue in extra:
+                    k = _ue_key_from_dict(ue)
+                    if k in seen:
+                        continue
+                    seen.add(k)
+                    results.append(ue)
+
+    # 2) Excepciones puntuales (legacy): UEs guardadas una a una.
+    for ex in excepciones_ue:
         ue = {
             "lat": ex.lat,
             "lon": ex.lon,
@@ -309,6 +449,7 @@ async def get_unidades_economicas(
             "categoria": ex.categoria or "otros",
             "source_file": ex.source_file,
             "is_exception": True,
+            "exception_reason": "ue_manual",
         }
         k = _ue_key_from_dict(ue)
         if k in seen:
