@@ -19,7 +19,6 @@ from app.core.security import create_access_token, hash_password, verify_passwor
 from app.deps import CurrentUser, DbSession
 from app.models.orm import User
 from app.schemas.auth import Token, UserCreate, UserLogin, UserPublic
-from app.services.map_profile_defaults import seed_default_map_profiles_for_user
 
 router = APIRouter(tags=["auth"])
 _log = logging.getLogger(__name__)
@@ -42,10 +41,19 @@ async def register(request: Request, body: UserCreate, db: DbSession) -> User:
     try:
         # bcrypt es CPU-bound; en hilo evita rarezas con el loop async.
         hashed = await asyncio.to_thread(hash_password, body.password)
-        user = User(email=email_norm, hashed_password=hashed)
+        user = User(
+            email=email_norm,
+            first_name=body.first_name.strip(),
+            middle_name=body.middle_name.strip() if body.middle_name else None,
+            last_name=body.last_name.strip(),
+            second_last_name=body.second_last_name.strip()
+            if body.second_last_name
+            else None,
+            organization=body.organization.strip(),
+            phone=body.phone.strip(),
+            hashed_password=hashed,
+        )
         db.add(user)
-        await db.flush()
-        await seed_default_map_profiles_for_user(db, user.id)
         await db.commit()
         await db.refresh(user)
         return user

@@ -30,6 +30,12 @@ class User(Base):
         UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
     )
     email: Mapped[str] = mapped_column(String(255), unique=True, index=True)
+    first_name: Mapped[str] = mapped_column(String(100))
+    middle_name: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    last_name: Mapped[str] = mapped_column(String(100))
+    second_last_name: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    organization: Mapped[str] = mapped_column(String(200))
+    phone: Mapped[str] = mapped_column(String(20))
     hashed_password: Mapped[str] = mapped_column(String(255))
     is_active: Mapped[bool] = mapped_column(Boolean, default=True)
     created_at: Mapped[datetime] = mapped_column(

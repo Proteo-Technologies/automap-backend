@@ -17,7 +17,7 @@ Con `DATABASE_URL` configurada: registro, login (JWT), mapas/borradores (`config
 
 | Método | Ruta | Auth | Descripción |
 |--------|------|------|-------------|
-| POST | `/api/auth/register` | No | Alta de usuario (`email`, `password` ≥ 8 caracteres) |
+| POST | `/api/auth/register` | No | Alta de usuario (`email`, `password`, `confirm_password`, `first_name`, `middle_name?`, `last_name`, `second_last_name?`, `organization`, `phone`) |
 | POST | `/api/auth/login` | No | Devuelve `{ "access_token", "token_type": "Bearer" }` |
 | GET | `/api/auth/me` | Bearer | Perfil del usuario |
 | GET/POST | `/api/maps` | Bearer | Listar / crear proyectos de mapa |
