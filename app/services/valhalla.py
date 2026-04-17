@@ -239,7 +239,7 @@ def _pick_three_min_total_length(
     """
     if len(pool) < 3:
         return None
-    order = sorted(range(len(pool)), key=lambda i: _polyline_length_m(pool[i]))[:18]
+    order = sorted(range(len(pool)), key=lambda i: _polyline_length_m(pool[i]))[:24]
     cells = [_polyline_cell_set(pool[i]) for i in order]
     lens = [_polyline_length_m(pool[i]) for i in order]
     m = len(order)
@@ -278,7 +278,7 @@ def _best_triple_min_max_overlap(
     """
     if len(pool) < 3:
         return None
-    order = sorted(range(len(pool)), key=lambda i: _polyline_length_m(pool[i]))[:22]
+    order = sorted(range(len(pool)), key=lambda i: _polyline_length_m(pool[i]))[:28]
     cells = [_polyline_cell_set(pool[i]) for i in order]
     lens = [_polyline_length_m(pool[i]) for i in order]
     m = len(order)
@@ -305,27 +305,6 @@ def _best_triple_min_max_overlap(
         [[float(lat), float(lon)] for lat, lon in pool[order[ib]]],
         [[float(lat), float(lon)] for lat, lon in pool[order[ic]]],
     ]
-
-
-def _snap_route_end_to_requested_coord(
-    coords: list[list[float]],
-    lat: float,
-    lon: float,
-    max_join_m: float = 95.0,
-) -> list[list[float]]:
-    """
-    Todas las alternativas deben terminar en el **mismo** punto pedido (pin).
-    Valhalla corta en la calle más cercana; si está cerca, el último vértice pasa
-    a ser exactamente `lat`/`lon` (tramo corto implícito pin ↔ calle).
-    """
-    if not coords:
-        return []
-    out = [list(p) for p in coords]
-    last = out[-1]
-    d = _haversine_m(last[0], last[1], lat, lon)
-    if 0.3 < d <= max_join_m:
-        out[-1] = [float(lat), float(lon)]
-    return out
 
 
 def _urban_short_trip_params(
@@ -376,27 +355,154 @@ def _endpoint_error_m(
     return _haversine_m(end[0], end[1], lat_dest, lon_dest)
 
 
-def _destination_approach_points(lat: float, lon: float) -> list[tuple[float, float]]:
+def _max_shortcut_deficit_m(
+    coords: list[list[float]],
+    lat_o: float,
+    lon_o: float,
+    lat_d: float,
+    lon_d: float,
+) -> float:
     """
-    Puntos alrededor del destino (~60–90 m) para que Valhalla enlace a distintas
-    aristas viales y las rutas lleguen por lados distintos.
+    Máximo sobre la polyline de (d(O,P)+d(P,D) − d(O,D)): grande si hay meandro o
+    desvío largo respecto al corredor directo (sin imponer que la vía sea recta).
+    """
+    chord = _haversine_m(lat_o, lon_o, lat_d, lon_d)
+    if chord < 1.0 or len(coords) < 3:
+        return 0.0
+    step = max(1, len(coords) // 100)
+    worst = 0.0
+    for i in range(0, len(coords), step):
+        lat, lon = coords[i]
+        d1 = _haversine_m(lat_o, lon_o, lat, lon)
+        d2 = _haversine_m(lat, lon, lat_d, lon_d)
+        worst = max(worst, d1 + d2 - chord)
+    lat, lon = coords[-1]
+    d1 = _haversine_m(lat_o, lon_o, lat, lon)
+    d2 = _haversine_m(lat, lon, lat_d, lon_d)
+    worst = max(worst, d1 + d2 - chord)
+    return worst
+
+
+def _route_recedes_from_dest_after_closest(
+    coords: list[list[float]],
+    lat_d: float,
+    lon_d: float,
+    bad_recede_m: float = 105.0,
+    tail_frac: float = 0.12,
+) -> bool:
+    """
+    True si la ruta se acercó al destino y luego se alejó de nuevo de forma clara
+    (p. ej. siguió recto más allá y dio la vuelta), no un simple rodeo de manzana al inicio.
+    """
+    n = len(coords)
+    if n < 18:
+        return False
+    dists = [_haversine_m(lat, lon, lat_d, lon_d) for lat, lon in coords]
+    d_min = min(dists)
+    if d_min > 88.0:
+        return False
+    i_min = min(range(n), key=lambda i: dists[i])
+    tail_start = max(1, int(n * (1.0 - tail_frac)))
+    if i_min >= tail_start:
+        return False
+    max_after = max(dists[i_min:])
+    return (max_after - d_min) >= bad_recede_m and max_after >= 85.0
+
+
+def _route_wasteful_detour_vs_chord(
+    coords: list[list[float]],
+    lat_o: float,
+    lon_o: float,
+    lat_d: float,
+    lon_d: float,
+    chord_m: float,
+) -> bool:
+    """Heurística anti–“megarodeo” o pasarse del destino y volver."""
+    if len(coords) < 8:
+        return False
+    deficit = _max_shortcut_deficit_m(coords, lat_o, lon_o, lat_d, lon_d)
+    cap = min(720.0, max(185.0, chord_m * 0.34 + 95.0))
+    if deficit > cap:
+        return True
+    if chord_m < 5200.0 and _route_recedes_from_dest_after_closest(coords, lat_d, lon_d):
+        return True
+    return False
+
+
+def _destination_approach_points(
+    lat: float,
+    lon: float,
+    *,
+    direct_haversine_m: float = 0.0,
+) -> list[tuple[float, float]]:
+    """
+    Puntos alrededor del destino para que Valhalla enlace a distintas aristas
+    viales y las rutas lleguen por lados distintos (aprovecha malla y sentidos).
     """
     out: list[tuple[float, float]] = []
-    for meters in (65.0, 95.0):
+    rings: list[float] = [42.0, 58.0, 72.0, 88.0]
+    if direct_haversine_m > 2200:
+        rings.extend((102.0, 118.0))
+    if direct_haversine_m > 3200:
+        rings.extend((135.0, 155.0))
+    if direct_haversine_m > 4800:
+        rings.extend((185.0, 215.0))
+    dirs = (
+        (1.0, 0.0),
+        (-1.0, 0.0),
+        (0.0, 1.0),
+        (0.0, -1.0),
+        (0.707, 0.707),
+        (0.707, -0.707),
+        (-0.707, 0.707),
+        (-0.707, -0.707),
+        (0.383, 0.924),
+        (0.924, 0.383),
+        (-0.383, 0.924),
+        (-0.924, 0.383),
+    )
+    for meters in rings:
         dlat = meters / 111_320.0
         dlon = meters / (111_320.0 * math.cos(math.radians(lat)))
-        for da, db in (
-            (1.0, 0.0),
-            (-1.0, 0.0),
-            (0.0, 1.0),
-            (0.0, -1.0),
-            (0.707, 0.707),
-            (0.707, -0.707),
-            (-0.707, 0.707),
-            (-0.707, -0.707),
-        ):
+        for da, db in dirs:
             out.append((lat + da * dlat, lon + db * dlon))
     return out
+
+
+def _build_long_trip_lateral_waypoints(
+    lat_origen: float,
+    lon_origen: float,
+    lat_dest: float,
+    lon_dest: float,
+) -> list[tuple[float, float]]:
+    """
+    Puntos `through` laterales suaves (≈1–2 cuadras), no arcos a vías rápidas lejanas.
+    """
+    dist_m = _haversine_m(lat_origen, lon_origen, lat_dest, lon_dest)
+    if dist_m < 2800.0:
+        return []
+    dx = lon_dest - lon_origen
+    dy = lat_dest - lat_origen
+    norm = math.hypot(dx, dy)
+    if norm < 1e-9:
+        return []
+    px = -dy / norm
+    py = dx / norm
+    lat_scale = min(0.0024, max(0.00055, (dist_m / 70_000.0) * 0.00105))
+    lon_scale = lat_scale / max(0.35, abs(math.cos(math.radians((lat_origen + lat_dest) * 0.5))))
+    points: list[tuple[float, float]] = []
+    for t in (0.24, 0.38, 0.52, 0.64):
+        base_lat = lat_origen + (lat_dest - lat_origen) * t
+        base_lon = lon_origen + (lon_dest - lon_origen) * t
+        for k in (1.0, -1.0):
+            for mag in (1.0, 1.22):
+                points.append(
+                    (
+                        base_lat + py * lat_scale * mag * k,
+                        base_lon + px * lon_scale * mag * k,
+                    )
+                )
+    return points
 
 
 def _extract_located_point(payload: dict) -> tuple[float, float] | None:
@@ -827,6 +933,8 @@ async def obtener_rutas(
     Cada ruta es una lista de coordenadas [[lat, lon], ...].
     """
     alt_total = max(1, min(alternativas, 3))
+    chord_pin_m = _haversine_m(lat_origen, lon_origen, lat_dest, lon_dest)
+    snap_lat, snap_lon = lat_dest, lon_dest
     locations = [
         {"lon": lon_origen, "lat": lat_origen, "radius": 80},
         {"lon": lon_dest, "lat": lat_dest, "radius": 120},
@@ -952,10 +1060,11 @@ async def obtener_rutas(
                     client, lat_o, lon_o, lat_via, lon_via, lat_d, lon_d
                 )
 
-        # Primero correlaciona destino con la calle más cercana.
+        # Primero correlaciona destino con la calle más cercana (vialidad).
         snapped_dest_lat, snapped_dest_lon = await _nearest_street_point(
             client, lat_dest, lon_dest
         )
+        snap_lat, snap_lon = snapped_dest_lat, snapped_dest_lon
         locations = [
             {"lon": lon_origen, "lat": lat_origen, "radius": 80},
             {"lon": snapped_dest_lon, "lat": snapped_dest_lat, "radius": 120},
@@ -965,11 +1074,8 @@ async def obtener_rutas(
         )
         # Recalcula cuerpos para usar destino correlacionado (calle más cercana).
         first_body = _mk_body(alternates=max(0, alt_total - 1))
+        # En trayectos urbanos típicos, evitar `use_highways: 1` (suele mandar a vías rápidas lejanas).
         fallback_bodies = [
-            _mk_body(
-                alternates=0,
-                costing_auto={"use_highways": 1.0, "use_tolls": 1.0},
-            ),
             _mk_body(
                 alternates=0,
                 costing_auto={"use_highways": 0.0, "use_tolls": 0.0},
@@ -978,7 +1084,40 @@ async def obtener_rutas(
                 alternates=0,
                 costing_auto={"use_highways": 0.2, "use_tolls": 1.0},
             ),
+            _mk_body(
+                alternates=0,
+                costing_auto={"use_highways": 0.35, "use_tolls": 0.5},
+            ),
         ]
+        if chord_pin_m > 7500:
+            fallback_bodies.insert(
+                0,
+                _mk_body(
+                    alternates=0,
+                    costing_auto={"use_highways": 1.0, "use_tolls": 1.0},
+                ),
+            )
+        if chord_pin_m > 2600:
+            fallback_bodies.extend(
+                [
+                    _mk_body(
+                        alternates=0,
+                        costing_auto={
+                            "use_highways": 0.45,
+                            "use_tolls": 0.55,
+                            "maneuver_penalty": 12,
+                        },
+                    ),
+                    _mk_body(
+                        alternates=0,
+                        costing_auto={
+                            "use_highways": 0.15,
+                            "use_tolls": 0.35,
+                            "maneuver_penalty": 5,
+                        },
+                    ),
+                ]
+            )
 
         response = await client.post(VALHALLA_URL, json=first_body)
         response.raise_for_status()
@@ -1052,7 +1191,9 @@ async def obtener_rutas(
 
         if alt_total > 1 and approach_lim > 0 and _n_distinct_sigs(routes) < 5:
             approach_pts = _destination_approach_points(
-                snapped_dest_lat, snapped_dest_lon
+                snapped_dest_lat,
+                snapped_dest_lon,
+                direct_haversine_m=max(direct_seg_m, chord_pin_m),
             )
             tasks = [
                 _through_limited(
@@ -1118,10 +1259,35 @@ async def obtener_rutas(
                         routes.append(res)
                 routes = _dedupe_routes(routes)
 
+        if alt_total > 1 and max(direct_seg_m, chord_pin_m) >= 3000:
+            wide = _build_long_trip_lateral_waypoints(
+                lat_origen,
+                lon_origen,
+                snapped_dest_lat,
+                snapped_dest_lon,
+            )
+            if wide and _n_distinct_sigs(routes) < 6:
+                wide_tasks = [
+                    _through_limited(
+                        lat_origen,
+                        lon_origen,
+                        wlat,
+                        wlon,
+                        snapped_dest_lat,
+                        snapped_dest_lon,
+                    )
+                    for wlat, wlon in wide[:12]
+                ]
+                for res in await asyncio.gather(*wide_tasks, return_exceptions=True):
+                    if isinstance(res, list) and res and len(res) >= 6:
+                        routes.append(res)
+                routes = _dedupe_routes(routes)
+
     if not routes:
         raise ValueError("Valhalla no devolvió geometría")
 
     direct_trip_m = _haversine_m(lat_origen, lon_origen, lat_dest, lon_dest)
+    chord_snap_m = max(1.0, _haversine_m(lat_origen, lon_origen, snap_lat, snap_lon))
     routes_pre_stretch = _dedupe_routes(list(routes))
     # Solo si hay varios candidatos: quita rutas muy largas vs. la más corta (through lejanos).
     # Umbrales algo más laxos si no sobran firmas: prioridad = ≥3 geometrías distintas.
@@ -1144,9 +1310,14 @@ async def obtener_rutas(
                 break
         routes = _dedupe_routes(routes)
 
+    if alt_total > 1 and direct_trip_m > 2500 and len(routes) >= 3:
+        pr_l = _drop_routes_much_longer_than_shortest(routes, 1.48)
+        if len({_route_signature(r) for r in pr_l}) >= alt_total:
+            routes = _dedupe_routes(pr_l)
+
     # Filtra rutas con rodeos extremos, círculos o final demasiado alejado del punto pedido.
     max_len_factor = (
-        _urban_short_trip_params(direct_trip_m)[0] if direct_trip_m <= 2500 else 1.75
+        _urban_short_trip_params(direct_trip_m)[0] if direct_trip_m <= 2500 else 1.68
     )
     routes_pre_sane = _dedupe_routes(list(routes))
     base = min((_polyline_length_m(r) for r in routes_pre_sane if r), default=0.0)
@@ -1159,7 +1330,11 @@ async def obtener_rutas(
             continue
         if _route_geometry_unacceptable(r):
             continue
-        if _endpoint_error_m(r, lat_dest, lon_dest) > 180:
+        if _route_wasteful_detour_vs_chord(
+            r, lat_origen, lon_origen, snap_lat, snap_lon, chord_snap_m
+        ):
+            continue
+        if _endpoint_error_m(r, snap_lat, snap_lon) > 180:
             continue
         sane_routes.append(r)
     if sane_routes:
@@ -1173,7 +1348,10 @@ async def obtener_rutas(
         r
         for r in routes_pre_sane
         if not _route_geometry_unacceptable(r)
-        and _endpoint_error_m(r, lat_dest, lon_dest) <= 180
+        and not _route_wasteful_detour_vs_chord(
+            r, lat_origen, lon_origen, snap_lat, snap_lon, chord_snap_m
+        )
+        and _endpoint_error_m(r, snap_lat, snap_lon) <= 180
     ]
     pool_for_fill = _dedupe_route_signatures(
         [[[float(lat), float(lon)] for lat, lon in r] for r in routes]
@@ -1187,13 +1365,16 @@ async def obtener_rutas(
                 [[float(lat), float(lon)] for lat, lon in r]
                 for r in routes_pre_stretch
                 if not _route_geometry_unacceptable(r)
-                and _endpoint_error_m(r, lat_dest, lon_dest) <= 180
+                and not _route_wasteful_detour_vs_chord(
+                    r, lat_origen, lon_origen, snap_lat, snap_lon, chord_snap_m
+                )
+                and _endpoint_error_m(r, snap_lat, snap_lon) <= 180
             ]
         )
 
     is_short_trip = direct_trip_m <= 2500
-    # Bastante estricto: evita dos “alternativas” casi la misma antes de elegir el trío.
-    near_identical_max = 0.70 if is_short_trip else 0.88
+    # Un poco más laxo en corto para no vaciar el pool antes de buscar 3 corredores.
+    near_identical_max = 0.76 if is_short_trip else 0.88
     routes_before_near = [
         [[float(lat), float(lon)] for lat, lon in r] for r in routes
     ]
@@ -1257,7 +1438,10 @@ async def obtener_rutas(
             [[float(lat), float(lon)] for lat, lon in r]
             for r in routes_pre_sane
             if not _route_geometry_unacceptable(r)
-            and _endpoint_error_m(r, lat_dest, lon_dest) <= 220
+            and not _route_wasteful_detour_vs_chord(
+                r, lat_origen, lon_origen, snap_lat, snap_lon, chord_snap_m
+            )
+            and _endpoint_error_m(r, snap_lat, snap_lon) <= 220
         ]
     )
     if len(out) < alt_total:
@@ -1265,7 +1449,7 @@ async def obtener_rutas(
     if len(out) < alt_total:
         out = _greedy_add_by_dissimilarity(out, alt_pool, alt_total)
     if len(out) < alt_total:
-        for max_pw in (0.52, 0.58, 0.64):
+        for max_pw in (0.52, 0.58, 0.64, 0.70, 0.76, 0.82):
             trip = (
                 _best_triple_min_max_overlap(alt_pool, max_pw)
                 if alt_total == 3
@@ -1275,33 +1459,21 @@ async def obtener_rutas(
                 out = trip
                 break
         if len(out) < alt_total and alt_total == 3:
-            cand = _select_pairwise_overlap_limited(alt_pool, alt_total, 0.68)
-            if len(cand) >= alt_total:
-                out = cand
+            for pw in (0.68, 0.74, 0.80):
+                cand = _select_pairwise_overlap_limited(alt_pool, alt_total, pw)
+                if len(cand) >= alt_total:
+                    out = cand
+                    break
 
     out = out[:alt_total]
-    # Mismo punto final exacto que el pin (coordenadas solicitadas).
-    pool_snapped = _dedupe_route_signatures(
-        [
-            _snap_route_end_to_requested_coord(
-                [[float(lat), float(lon)] for lat, lon in r],
-                lat_dest,
-                lon_dest,
-            )
-            for r in alt_pool
-        ]
-    )
-    out = [
-        _snap_route_end_to_requested_coord(list(map(list, r)), lat_dest, lon_dest)
-        for r in out
-    ]
+    # Fin en vialidad correlacionada (no prolongar hasta el pin: no es transitable).
     out = _dedupe_route_signatures(out)
     if len(out) < alt_total:
-        out = _fill_with_distinct_geometries(out, pool_snapped, alt_total)
+        out = _fill_with_distinct_geometries(out, alt_pool, alt_total)
     if len(out) < alt_total:
-        out = _greedy_add_by_dissimilarity(out, pool_snapped, alt_total)
+        out = _greedy_add_by_dissimilarity(out, alt_pool, alt_total)
 
-    # Contrato: `alt_total` entradas; duplicar solo si no hay más firmas distintas tras el snap.
+    # Contrato: `alt_total` entradas; duplicar solo si no hay más firmas distintas.
     while len(out) < alt_total:
         if not out:
             raise ValueError("Valhalla no devolvió rutas válidas")
