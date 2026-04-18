@@ -91,11 +91,16 @@ def _public(mp: MapProfile) -> MapProfilePublic:
     csv_raw = mp.csv_layers if isinstance(mp.csv_layers, list) else []
     csv_layers = [str(x) for x in csv_raw]
     vista = (mp.map_vista or "denue_general").strip()
-    modo_ruta = "normal"
-    modo_simbologia = "normal"
-    if vista in DEFAULT_ROUTE_MAP_MODES and vista != "normal":
-        modo_ruta = vista
+    # `modo_ruta` se deriva del map_vista (si aplica). `modo_simbologia` vive en su
+    # propia columna, así que es independiente y no se pierde aunque el perfil
+    # también tenga un map_vista de tipo ruta_*.
+    modo_ruta = vista if vista in DEFAULT_ROUTE_MAP_MODES and vista != "normal" else "normal"
+    stored_simb = (getattr(mp, "modo_simbologia", None) or "").strip().lower()
+    if stored_simb in DEFAULT_SYMBOLOGY_MODES:
+        modo_simbologia = stored_simb
     else:
+        # Fallback histórico: perfiles antiguos sin columna dedicada derivaban
+        # modo_simbologia del map_vista (accion_riesgos_*).
         modo_simbologia = RISK_MODE_BY_VISTA.get(vista, "normal")
     return MapProfilePublic(
         id=mp.id,
@@ -117,6 +122,11 @@ def _resolve_map_vista(
     modo_simbologia: str | None,
     fallback: str = "denue_general",
 ) -> str:
+    """
+    `map_vista` ahora sólo refleja el modo de ruta (o un valor explícito).
+    `modo_simbologia` se persiste en columna aparte; únicamente si el cliente envía
+    un `map_vista` de tipo `accion_riesgos_*` (uso legacy) caerá aquí como vista.
+    """
     mv = (map_vista or "").strip()
     if mv:
         if mv == "normal":
@@ -139,19 +149,33 @@ def _resolve_map_vista(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail=f"modo_ruta no válido: {mr}",
             )
-        if mr != "normal":
-            return mr
+        # Si el cliente manda explícitamente `modo_ruta = normal`, se "limpia" la
+        # vista de ruta (no se hereda del fallback anterior). De lo contrario, los
+        # usuarios no podrían deshacer una ruta sin cambiar otros campos.
+        if mr == "normal":
+            return "denue_general"
+        return mr
 
-    if ms:
-        if ms not in DEFAULT_SYMBOLOGY_MODES:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail=f"modo_simbologia no válido: {ms}",
-            )
-        if ms != "normal":
-            return RISK_VISTA_BY_MODE.get(ms, fallback)
+    # modo_simbologia se guarda por separado: sólo validamos el valor aquí.
+    if ms and ms not in DEFAULT_SYMBOLOGY_MODES:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"modo_simbologia no válido: {ms}",
+        )
 
     return fallback
+
+
+def _resolve_modo_simbologia(value: str | None, fallback: str = "normal") -> str:
+    v = (value or "").strip().lower()
+    if not v:
+        return fallback
+    if v not in DEFAULT_SYMBOLOGY_MODES:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"modo_simbologia no válido: {v}",
+        )
+    return v
 
 
 @router.get("", response_model=list[MapProfilePublic])
@@ -212,6 +236,7 @@ async def create_profile(
         body.modo_simbologia,
         fallback="denue_general",
     )
+    modo_simbologia = _resolve_modo_simbologia(body.modo_simbologia)
     mp = MapProfile(
         id=uuid4(),
         user_id=user.id,
@@ -219,6 +244,7 @@ async def create_profile(
         layers=layers,
         csv_layers=csv_ok,
         map_vista=map_vista,
+        modo_simbologia=modo_simbologia,
     )
     db.add(mp)
     await db.commit()
@@ -283,6 +309,10 @@ async def update_profile(
             body.modo_ruta,
             body.modo_simbologia,
             fallback=mp.map_vista or "denue_general",
+        )
+    if body.modo_simbologia is not None:
+        mp.modo_simbologia = _resolve_modo_simbologia(
+            body.modo_simbologia, fallback=mp.modo_simbologia or "normal"
         )
     await db.commit()
     await db.refresh(mp)

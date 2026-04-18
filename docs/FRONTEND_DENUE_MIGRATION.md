@@ -28,7 +28,7 @@ Este documento resume los cambios recientes para que frontend elimine logica de 
 - `GET /api/map-profiles/options` (nuevo, autenticado)
   - Devuelve opciones para crear tipo de mapa: `modo_ruta` (incluye ruta o normal) y `modo_simbologia` (normal o numero).
 - `POST /api/map-profiles` y `PATCH /api/map-profiles/{id}` (actualizado)
-  - Ya persisten `modo_ruta` / `modo_simbologia` (ademas de nombre y capas) via `map_vista`.
+  - Persisten `modo_ruta` a traves de `map_vista` y `modo_simbologia` en columna propia (independiente de `map_vista`).
 
 ## Cambios en payload de UEs
 
@@ -79,7 +79,10 @@ Nota: frontend debe leer el catalogo en runtime usando `GET /api/unidades-econom
 - `almacen_sustancias_peligrosas`: `49319`
 - `recicladoras`: `56292`, `43422`, `434311`, `434312`, `434313`
 - `restaurantes`: `722`
-- `gaseras`: `468413`, `468414`
+- `gaseras`: `468413`, `468414`, `434233`, `221210`
+  - Incluye: venta al menor de gas LP en cilindros/tanques (`468413`), estaciones de
+    carburación de gas LP (`468414`), **comercio al por mayor de gas LP** (`434233`,
+    depósitos/distribuidoras) y **distribución de gas natural por ductos** (`221210`).
 
 ## Como se calcula `categoria` (backend)
 
@@ -222,15 +225,28 @@ Nota: frontend debe leer el catalogo en runtime usando `GET /api/unidades-econom
 - Al guardar un tipo de mapa, frontend puede enviar:
   - `modo_ruta`: `normal` | `ruta_ue_a_coordenada` | `ruta_coordenada_a_ue` | `ruta_reunion_a_ue` | `ruta_coordenada_ue_ida_vuelta`
   - `modo_simbologia`: `normal` | `simbologia` | `numero`
-- Backend resuelve y guarda `map_vista` con esta prioridad:
-  1. Si llega `map_vista`, usa ese valor.
-  2. Si `modo_ruta` != `normal`, usa el modo de ruta.
-  3. Si `modo_ruta` es `normal` y `modo_simbologia` != `normal`, usa:
-     - `simbologia` -> `accion_riesgos_simbologia`
-     - `numero` -> `accion_riesgos_numero`
-  4. Si ambos son `normal`, usa `denue_general`.
-- En respuestas de perfiles (`GET /api/map-profiles` y `GET /api/map-profiles/{id}`) ahora regresan:
-  - `map_vista`
-  - `modo_ruta`
-  - `modo_simbologia`
+- `modo_ruta` y `modo_simbologia` son **ortogonales**. Un perfil puede tener una
+  ruta activa y ademas simbologia de riesgos (por numero o por icono) al mismo
+  tiempo.
+- Backend resuelve `map_vista` solo a partir de `modo_ruta` (o `map_vista` explicito):
+  1. Si llega `map_vista`, valida y lo usa.
+  2. Si llega `modo_ruta` distinto de `normal`, lo usa.
+  3. Si `modo_ruta == normal` (explicito), limpia a `denue_general`.
+  4. Si no se envia ninguno, conserva el `map_vista` anterior (PATCH).
+- `modo_simbologia` se persiste en columna aparte (`map_profiles.modo_simbologia`,
+  migracion `008_map_profile_modo_simb`). No se pierde aunque el perfil tambien
+  tenga `map_vista = ruta_*`.
+- En respuestas de perfiles (`GET /api/map-profiles` y `GET /api/map-profiles/{id}`) regresan:
+  - `map_vista` (derivado del modo_ruta o valor explicito)
+  - `modo_ruta` (derivado de `map_vista` si coincide con una vista de ruta)
+  - `modo_simbologia` (valor almacenado tal cual)
+
+### Responsabilidad del frontend
+
+Para que el selector "Modo de simbologia" surta efecto en el render, el mapa debe
+combinar `mapVista` y `modo_simbologia`:
+- `modo_simbologia = "numero"` activa la simbologia por numero (conteo por categoria).
+- `modo_simbologia = "simbologia"` activa la simbologia por icono de riesgos.
+- Cualquiera de ellos se compone con un `mapVista` de tipo `ruta_*` si el perfil
+  tambien tiene ruta.
 

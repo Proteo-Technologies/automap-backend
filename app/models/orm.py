@@ -79,6 +79,12 @@ class MapProfile(Base):
     )  # UUIDs de SymbologyProfile (strings); legado ignorado al leer
     csv_layers: Mapped[list[Any]] = mapped_column(JSONB, default=list)
     map_vista: Mapped[str] = mapped_column(String(64), default="denue_general")
+    # Modo de simbología ortogonal a `map_vista` (normal | simbologia | numero).
+    # Se persiste por separado para que un perfil con `map_vista = ruta_*` también
+    # pueda tener "numero" (o "simbologia") activo al mismo tiempo.
+    modo_simbologia: Mapped[str] = mapped_column(
+        String(32), default="normal", server_default="normal", nullable=False
+    )
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now()
     )

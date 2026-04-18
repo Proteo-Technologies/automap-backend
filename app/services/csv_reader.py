@@ -21,8 +21,10 @@ import pandas as pd
 SCIAN_CATEGORY_RULES: list[tuple[str, tuple[str, ...]]] = [
     # Combustibles al por menor (SCIAN 46841x); no incluye 468211 autopartes, etc.
     ("gasolineras", ("468411", "468412", "468419")),
-    # Gas LP / gaseras (cilindros, tanques estacionarios y similares).
-    ("gaseras", ("468413", "468414")),
+    # Gas LP / gaseras: retail al menor (cilindros, estaciones de carburación),
+    # comercio al por mayor de gas LP y distribución de gas natural por ductos.
+    # Incluye depósitos / distribuidoras además de las tomas de carga al menor.
+    ("gaseras", ("468413", "468414", "434233", "221210")),
     # Restaurantes y servicios de preparación de alimentos.
     ("restaurantes", ("722",)),
     # Reciclaje y acopio/recuperación de materiales.
