@@ -1,0 +1,17 @@
+.git
+.gitattributes
+.cursor
+.venv
+__pycache__
+*.py[cod]
+*.md
+.env
+.env.*
+!.env.example
+.pytest_cache
+.ruff_cache
+.mypy_cache
+# CSV pesados: se montan con volumen en tiempo de ejecución
+DB/
+railway.json
+render.yaml

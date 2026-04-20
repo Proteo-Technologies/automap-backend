@@ -61,10 +61,28 @@ Abre en el navegador: **http://localhost:8000/docs**
 
 ## Docker
 
+### API único (sin balanceador)
+
 ```bash
 docker build -t automap-backend .
 docker run -p 8000:8000 -v $(pwd)/DB:/app/DB automap-backend
 ```
+
+### Nginx + balanceo de carga (compose)
+
+Copia `.env.example` a `.env` si quieres cambiar `DATA_DIR` o `ALLOWED_ORIGINS`.
+
+```bash
+docker compose up -d --build
+```
+
+La API queda detrás de nginx en el puerto **8000** (o el que definas en `PUBLIC_PORT`). Para varias réplicas del backend:
+
+```bash
+docker compose up -d --build --scale backend=4
+```
+
+Nginx reparte las peticiones entre los contenedores `backend` usando el DNS interno de Docker (`resolver 127.0.0.11`) y cabeceras de proxy.
 
 ## Despliegue en Railway / Render
 
