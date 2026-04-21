@@ -30,7 +30,11 @@ services:
     environment:
       DATA_DIR: ${DATA_DIR:-./DB}
       ALLOWED_ORIGINS: ${ALLOWED_ORIGINS:-http://localhost:3000,http://localhost:3001}
+      # Si DATABASE_URL está vacío, el entrypoint arma la URL con POSTGRES_* (mismo compose).
       DATABASE_URL: ${DATABASE_URL:-}
+      POSTGRES_USER: ${POSTGRES_USER:-automap}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-changeme}
+      POSTGRES_DB: ${POSTGRES_DB:-automap}
       JWT_SECRET: ${JWT_SECRET:-cambiar-en-produccion-usa-secreto-largo-aleatorio}
       ENV: ${ENV:-development}
       TRUSTED_PROXY: ${TRUSTED_PROXY:-false}
@@ -61,7 +65,8 @@ services:
     image: postgres:16-alpine
     environment:
       POSTGRES_USER: ${POSTGRES_USER:-automap}
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD requerido en .env}
+      # En producción define POSTGRES_PASSWORD en .env (no uses el valor por defecto).
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-changeme}
       POSTGRES_DB: ${POSTGRES_DB:-automap}
     volumes:
       - pgdata:/var/lib/postgresql/data
