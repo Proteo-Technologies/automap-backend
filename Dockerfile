@@ -14,10 +14,14 @@ COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
 COPY app ./app
+COPY alembic ./alembic
+COPY alembic.ini ./
+COPY scripts/docker-entrypoint.sh /usr/local/bin/docker-entrypoint.sh
+RUN chmod +x /usr/local/bin/docker-entrypoint.sh
 
 USER appuser
 
 EXPOSE 8000
 
-# Detrás de nginx: cabeceras de proxy para esquema/origen correctos en URL absolutas si las añades más adelante
-CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000", "--proxy-headers", "--forwarded-allow-ips", "*"]
+# El entrypoint aplica `alembic upgrade head` si DATABASE_URL está definida y luego lanza uvicorn.
+ENTRYPOINT ["/usr/local/bin/docker-entrypoint.sh"]

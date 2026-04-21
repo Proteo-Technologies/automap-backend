@@ -30,10 +30,19 @@ services:
     environment:
       DATA_DIR: ${DATA_DIR:-./DB}
       ALLOWED_ORIGINS: ${ALLOWED_ORIGINS:-http://localhost:3000,http://localhost:3001}
+      DATABASE_URL: ${DATABASE_URL:-}
+      JWT_SECRET: ${JWT_SECRET:-cambiar-en-produccion-usa-secreto-largo-aleatorio}
+      ENV: ${ENV:-development}
+      TRUSTED_PROXY: ${TRUSTED_PROXY:-false}
+      EXPOSE_API_DOCS: ${EXPOSE_API_DOCS:-true}
+      HSTS_SECONDS: ${HSTS_SECONDS:-0}
     volumes:
       - ./DB:/app/DB:ro
     networks:
       - automap
+    depends_on:
+      postgres:
+        condition: service_healthy
     restart: unless-stopped
     healthcheck:
       test:
@@ -48,6 +57,32 @@ services:
       retries: 5
       start_period: 45s
 
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-automap}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD requerido en .env}
+      POSTGRES_DB: ${POSTGRES_DB:-automap}
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    networks:
+      - automap
+    # Solo expuesto internamente; no publica puerto al host por seguridad.
+    # Descomenta para acceso local con psql/DBeaver (solo dev):
+    # ports:
+    #   - "127.0.0.1:5432:5432"
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-automap} -d ${POSTGRES_DB:-automap}"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 20s
+
 networks:
   automap:
     driver: bridge
+
+volumes:
+  pgdata:
+    driver: local
