@@ -1,0 +1,252 @@
+# Migracion Frontend: clasificacion DENUE desde backend
+
+Este documento resume los cambios recientes para que frontend elimine logica de reclasificacion que ya no le corresponde.
+
+## Objetivo
+
+- Backend ahora entrega una clasificacion simplificada por UE.
+- Frontend debe consumir esa clasificacion tal cual, sin volver a mapear codigos SCIAN.
+
+## URL base y proxy
+
+- La API FastAPI corre por defecto en `http://localhost:8000` (ver `README.md`).
+- Si el frontend usa `http://localhost:3000/api/...`, Next (o similar) debe **reenviar** esa ruta al backend en el puerto **8000**. Si el proxy no esta configurado o el backend no esta levantado, veras mensajes tipo "API no disponible".
+- Para comprobar el backend sin pasar por el frontend, abre en el navegador:
+  - `http://localhost:8000/docs`
+  - `http://localhost:8000/api/health`
+
+## Endpoints relevantes
+
+- `GET /api/unidades-economicas`
+  - Query existente: `minLat`, `minLon`, `maxLat`, `maxLon`, `limit`
+  - Query opcional: `codigos` + `modoCodigos=prefix|exact`
+  - Query opcional: `archivos`
+- `GET /api/unidades-economicas/categorias` (nuevo)
+  - Devuelve el catalogo de categorias simplificadas disponibles para simbologia.
+- `GET /api/map-profiles/global-actions` (nuevo, autenticado)
+  - Devuelve acciones globales de mapa que aplican a cualquier perfil.
+- `GET /api/map-profiles/options` (nuevo, autenticado)
+  - Devuelve opciones para crear tipo de mapa: `modo_ruta` (incluye ruta o normal) y `modo_simbologia` (normal o numero).
+- `POST /api/map-profiles` y `PATCH /api/map-profiles/{id}` (actualizado)
+  - Persisten `modo_ruta` a traves de `map_vista` y `modo_simbologia` en columna propia (independiente de `map_vista`).
+
+## Cambios en payload de UEs
+
+Cada UE ahora incluye:
+
+- `lat`
+- `lon`
+- `codigo_act`
+- `nombre_act` (actividad SCIAN)
+- `nom_estab` (nombre del establecimiento)
+- `categoria` (clasificacion simplificada backend)
+
+Ejemplo:
+
+```json
+{
+  "lat": 19.28725929,
+  "lon": -99.63714314,
+  "codigo_act": "931412",
+  "nombre_act": "Mantenimiento de la seguridad y el orden publico",
+  "nom_estab": "COORDINACION MUNICIPALDE PROTECCION CIVIL Y BOMBEROS",
+  "categoria": "bomberos"
+}
+```
+
+## Categorias simplificadas actuales
+
+- `bomberos`
+- `almacen_sustancias_peligrosas`
+- `recicladoras`
+- `restaurantes`
+- `gaseras`
+- `industria`
+- `escuelas`
+- `hospitales`
+- `hoteles`
+- `iglesias`
+- `museos`
+- `gasolineras`
+- `policia`
+- `oficinas`
+- `otros`
+
+Nota: frontend debe leer el catalogo en runtime usando `GET /api/unidades-economicas/categorias`.
+
+### Codigos SCIAN usados para nuevas categorias
+
+- `almacen_sustancias_peligrosas`: `49319`
+- `recicladoras`: `56292`, `43422`, `434311`, `434312`, `434313`
+- `restaurantes`: `722`
+- `gaseras`: `468413`, `468414`, `434233`, `221210`
+  - Incluye: venta al menor de gas LP en cilindros/tanques (`468413`), estaciones de
+    carburación de gas LP (`468414`), **comercio al por mayor de gas LP** (`434233`,
+    depósitos/distribuidoras) y **distribución de gas natural por ductos** (`221210`).
+
+## Como se calcula `categoria` (backend)
+
+- Casi siempre por **`codigo_act` (SCIAN)** con prefijos definidos en backend.
+- **No** se usa el nombre del establecimiento para “adivinar” categoria (evita falsos positivos como nombres comerciales con “Bomberos”).
+- Excepcion: codigo **931412** (orden publico / seguridad); ahi el nombre ayuda a distinguir `bomberos` / `policia` / `oficinas`.
+
+## Logica que frontend debe eliminar
+
+- Reclasificacion de `codigo_act` en cliente.
+- Reglas por texto para inferir categoria.
+- Mapeos internos de iconos basados en prefijos SCIAN.
+- Uso de `nombre_act` como unico nombre visible del marcador.
+
+## Logica recomendada en frontend
+
+- Usar `categoria` para elegir icono/color.
+- Usar `nom_estab` como titulo principal del marcador/popup.
+- Usar `nombre_act` como subtitulo informativo.
+- Mantener `codigo_act` solo para detalle y debug.
+
+## Compatibilidad y transicion
+
+- Si algun registro llega sin `categoria`, usar fallback visual `otros`.
+- Si algun registro llega con `nom_estab` vacio, mostrar `nombre_act`.
+- No asumir lista fija de categorias: preferir el endpoint de catalogo.
+
+## Gasolineras y conteos
+
+- En backend, la categoria `gasolineras` usa codigos SCIAN **468411**, **468412** y **468419** (venta de combustibles al por menor). No entran **468211** (autopartes), **468311** (motos), etc., aunque el nombre comercial suene parecido.
+- Si el mapa muestra un bbox muy pequeno, puede haber una gasolinera DENUE a **cientos de metros** del centro del recuadro y no aparecer: el filtro es por coordenadas dentro del bbox, no por distancia al centro.
+- Con **varios CSV** en `DATA_DIR`, el cupo `limit` se reparte entre archivos (tambien cuando se usa `codigos`), para no perder UEs que esten solo en el segundo archivo.
+
+## Diagnostico: "API no disponible" al pedir UEs
+
+1. Confirma que el backend esta corriendo (`uvicorn app.main:app --reload --port 8000`).
+2. Prueba directo contra el backend (sin puerto 3000), mismo bbox y `limit`.
+3. Si usas proxy en `:3000`, revisa **timeout**: consultas con `limit` alto y varios CSV pueden tardar varios segundos; un timeout corto (p. ej. 3 s) corta la peticion y el cliente muestra error generico.
+4. Baja `limit` en desarrollo (p. ej. 800–1500) si el mapa no lo necesita todo a la vez.
+
+## Excepciones UE fuera de buffer (nuevo)
+
+- Guía detallada para frontend: `docs/FRONTEND_UE_EXCEPCIONES.md`.
+- **Por categoría (recomendado):** el usuario marca categorías (ej. `hospitales`); al pedir UEs con `incluirExcepciones=true` se añaden todas las UEs de esas categorías que queden **fuera** del bbox (hasta `limiteExcepcionesFuera`).
+  - `GET/POST /api/unidades-economicas/excepciones-por-categoria`
+  - `DELETE /api/unidades-economicas/excepciones-por-categoria/{id}`
+- **Por UE puntual (legacy):** lista explícita de establecimientos.
+  - `GET/POST /api/unidades-economicas/excepciones`
+  - `DELETE /api/unidades-economicas/excepciones/{id}`
+- Endpoint principal:
+  - `GET /api/unidades-economicas?...&incluirExcepciones=true&limiteExcepcionesFuera=3000`
+  - Requiere `Authorization: Bearer <token>`.
+- Las UEs extra se deduplican respecto al resultado del bbox.
+
+## Rutas operativas y acciones globales
+
+- Los perfiles de mapa por defecto (`map_vista`) ahora representan **rutas operativas**:
+  - `ruta_ue_a_coordenada` (hasta 3 alternativas)
+  - `ruta_coordenada_a_ue`
+  - `ruta_reunion_a_ue`
+  - `ruta_coordenada_ue_ida_vuelta` (ida y vuelta)
+- Las siguientes piezas ya no se tratan como mapas específicos, sino como **acciones globales** disponibles en cualquier mapa:
+  - `accion_poligono_predio`
+  - `accion_puntos_reunion`
+- Tambien quedan como acciones globales:
+  - `accion_riesgos_simbologia`
+  - `accion_riesgos_numero`
+- Estas acciones se pueden consultar en runtime desde `GET /api/map-profiles/global-actions`.
+- `accion_riesgos_simbologia` y `accion_riesgos_numero` dejan de existir como perfil por defecto.
+
+### Llamada de frontend para rutas operativas
+
+- Endpoint: `GET /api/rutas-operativas`
+- Query base:
+  - `tipo`
+  - `ueLat`, `ueLon`
+  - `coordLat`, `coordLon` (cuando aplique)
+  - `reunionLat`, `reunionLon` (solo `reunion_a_ue`)
+- Tipos recomendados (alineados con `map_vista` guardado):
+  - `ruta_ue_a_coordenada` (hasta 3 alternativas)
+  - `ruta_coordenada_a_ue` (1 ruta)
+  - `ruta_reunion_a_ue` (1 ruta)
+  - `ruta_coordenada_ue_ida_vuelta` (2 rutas: ida y vuelta)
+- Compatibilidad: backend tambien acepta tipos legacy sin prefijo `ruta_`:
+  - `ue_a_coordenada`, `coordenada_a_ue`, `reunion_a_ue`, `coordenada_ue_ida_vuelta`.
+- Recomendacion frontend: enviar siempre los IDs con prefijo `ruta_` (los mismos que persiste `map_vista`).
+
+### Respuesta esperada y render en frontend
+
+- Respuesta:
+  - `tipo`: tipo normalizado de ruta
+  - `total`: numero de rutas devueltas
+  - `rutas`: arreglo con `{ id, sentido, coordinates }`
+- Para `ruta_ue_a_coordenada`:
+  - Esperado: `total` hasta `3`.
+  - Nota: si el motor de rutas no encuentra alternativas realmente distintas, puede devolver `1` o `2`.
+- Para `ruta_coordenada_ue_ida_vuelta`:
+  - Esperado: `total = 2` con `id: "ida"` y `id: "vuelta"`.
+- En frontend, no asumir una sola ruta:
+  - Iterar `rutas[]` y pintar todas.
+  - Diferenciar por `id` o `sentido` para color/estilo.
+
+### Ajustes recientes para evitar "solo llega 1 ruta"
+
+- Backend reforzo la extraccion de rutas alternativas de Valhalla (principal + alternas).
+- Para `ruta_ue_a_coordenada`, el backend solicita hasta 3 rutas y devuelve las disponibles en `rutas[]`.
+- Si Valhalla responde menos de 3 en el intento principal, backend hace intentos adicionales variando preferencias de costo vial para recuperar rutas distintas.
+- Si aun asi no se completan 3 rutas distintas, backend intenta rutas con desvio (waypoint intermedio) para ampliar opciones.
+- Contrato final para `ruta_ue_a_coordenada`: backend siempre responde `total = 3` y `rutas.length = 3`.
+- Se agrego optimizacion de calidad:
+  - desvíos intermedios mas cortos (evita rodeos muy grandes),
+  - filtro de rutas con rodeo extremo,
+  - filtro cuando el final queda demasiado lejos del punto de coordenadas solicitado.
+- Backend usa `radius` al map-matching de origen/destino para aterrizar la ruta a vialidad cercana cuando el punto cae en un lugar sin acceso vehicular directo.
+- **Diversidad entre las 3 rutas:** backend genera candidatos adicionales con puntos de llegada ligeramente desplazados alrededor del destino (para intentar accesos por calles distintas) y elige las 3 rutas con **menor solapamiento** entre sí (no solo las tres primeras que devuelve el motor).
+- Frontend debe renderizar **todas** las entradas de `rutas[]` y no asumir un maximo fijo.
+
+### Validacion de punto de reunion (frontend)
+
+- En `ruta_reunion_a_ue`, backend exige `reunionLat` y `reunionLon`.
+- Si el punto de reunion coincide con la UE, backend responde `422` (coordenadas invalidas para este caso).
+- Antes de invocar la ruta:
+  - confirmar que el usuario realmente coloco/movio el punto de reunion,
+  - leer la coordenada actual del marcador de reunion (no una referencia antigua),
+  - enviar esas coordenadas en la query.
+
+### Checklist de debug rapido (Network)
+
+- Verificar URL final de la request:
+  - `tipo` correcto (`ruta_ue_a_coordenada`, `ruta_reunion_a_ue`, etc.).
+  - `coordLat/coordLon` o `reunionLat/reunionLon` presentes segun el caso.
+- Verificar respuesta JSON:
+  - `total` coincide con `rutas.length`.
+  - Para ida/vuelta existen `id: "ida"` y `id: "vuelta"`.
+  - Para alternativas existen `id: "alternativa_1"...`.
+- Si llega `422`, mostrar mensaje de validacion al usuario y no hacer fallback silencioso a otra ruta.
+
+### Persistencia al crear/editar tipo de mapa
+
+- Al guardar un tipo de mapa, frontend puede enviar:
+  - `modo_ruta`: `normal` | `ruta_ue_a_coordenada` | `ruta_coordenada_a_ue` | `ruta_reunion_a_ue` | `ruta_coordenada_ue_ida_vuelta`
+  - `modo_simbologia`: `normal` | `simbologia` | `numero`
+- `modo_ruta` y `modo_simbologia` son **ortogonales**. Un perfil puede tener una
+  ruta activa y ademas simbologia de riesgos (por numero o por icono) al mismo
+  tiempo.
+- Backend resuelve `map_vista` solo a partir de `modo_ruta` (o `map_vista` explicito):
+  1. Si llega `map_vista`, valida y lo usa.
+  2. Si llega `modo_ruta` distinto de `normal`, lo usa.
+  3. Si `modo_ruta == normal` (explicito), limpia a `denue_general`.
+  4. Si no se envia ninguno, conserva el `map_vista` anterior (PATCH).
+- `modo_simbologia` se persiste en columna aparte (`map_profiles.modo_simbologia`,
+  migracion `008_map_profile_modo_simb`). No se pierde aunque el perfil tambien
+  tenga `map_vista = ruta_*`.
+- En respuestas de perfiles (`GET /api/map-profiles` y `GET /api/map-profiles/{id}`) regresan:
+  - `map_vista` (derivado del modo_ruta o valor explicito)
+  - `modo_ruta` (derivado de `map_vista` si coincide con una vista de ruta)
+  - `modo_simbologia` (valor almacenado tal cual)
+
+### Responsabilidad del frontend
+
+Para que el selector "Modo de simbologia" surta efecto en el render, el mapa debe
+combinar `mapVista` y `modo_simbologia`:
+- `modo_simbologia = "numero"` activa la simbologia por numero (conteo por categoria).
+- `modo_simbologia = "simbologia"` activa la simbologia por icono de riesgos.
+- Cualquiera de ellos se compone con un `mapVista` de tipo `ruta_*` si el perfil
+  tambien tiene ruta.
+

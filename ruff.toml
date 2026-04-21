@@ -1,0 +1,14 @@
+line-length = 120
+target-version = "py312"
+
+[lint]
+select = ["E", "F", "W", "I"]
+# E501 (line too long): los strings/descriptions largos en Pydantic Field(...) y
+# comentarios no aportan valor al romperlos. El formatter ya maneja código.
+ignore = ["E501"]
+
+[lint.per-file-ignores]
+# load_dotenv() debe ejecutarse antes de importar módulos que leen variables de entorno.
+"app/main.py" = ["E402"]
+# Archivos de migración generados por Alembic: no aplicamos estilo estricto.
+"alembic/versions/*.py" = ["E402", "E501", "F401"]

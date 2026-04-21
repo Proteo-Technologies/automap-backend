@@ -1,2 +1,2 @@
-# Git LFS para archivos CSV grandes
-*.csv filter=lfs diff=lfs merge=lfs -text
+# Evita CRLF en scripts ejecutados en Linux (Docker); sin esto, /bin/sh^M falla.
+*.sh text eol=lf
