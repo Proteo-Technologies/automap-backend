@@ -262,6 +262,27 @@ def _agregar_categoria(df: pd.DataFrame) -> pd.DataFrame:
     return out
 
 
+def _bbox_center(bbox: Bbox) -> tuple[float, float]:
+    return (
+        (bbox.min_lat + bbox.max_lat) / 2.0,
+        (bbox.min_lon + bbox.max_lon) / 2.0,
+    )
+
+
+def _with_distance_to_center(df: pd.DataFrame, bbox: Bbox) -> pd.DataFrame:
+    """
+    Añade una columna `__dist` con la distancia euclidiana en grados al centro del bbox.
+    Sirve solo para ordenar (no es una distancia real en km); al recortar `nsmallest`
+    garantiza que los registros más cercanos a la vista aparezcan primero.
+    """
+    out = df.copy()
+    c_lat, c_lon = _bbox_center(bbox)
+    dlat = out["lat"] - c_lat
+    dlon = out["lon"] - c_lon
+    out["__dist"] = (dlat * dlat) + (dlon * dlon)
+    return out
+
+
 def filtrar_por_bbox(
     filepath: str,
     bbox: Bbox,
@@ -274,6 +295,7 @@ def filtrar_por_bbox(
     Si se pasan `prefijos`, filtra por `codigo_act` según `modo_codigos`:
       - "prefix": inicia con alguno de los códigos enviados
       - "exact": coincide exactamente con alguno de los códigos enviados
+    Cuando hay más resultados que `limit`, se priorizan los más cercanos al centro del bbox.
     """
     if not os.path.exists(filepath):
         return []
@@ -305,14 +327,11 @@ def filtrar_por_bbox(
     n = len(masked)
     if n <= limit:
         resultado = masked
-    elif prefijos is not None:
-        # Con filtro por prefijos (p. ej. riesgos/rutas) se mantiene orden estable.
-        resultado = masked.head(limit)
     else:
-        # Sin prefijos, `head(limit)` devolvía siempre las mismas filas iniciales del CSV
-        # (muchas gasolineras/industria) y otras actividades quedaban en 0 en el cliente.
-        # Muestra reproducible para mezclar actividades dentro del bbox.
-        resultado = masked.sample(n=limit, random_state=42)
+        # Priorizar los registros más cercanos al centro del bbox. Antes se usaba
+        # `sample()` / `head()` y podía dejar fuera UEs muy cercanas a la vista.
+        masked = _with_distance_to_center(masked, bbox)
+        resultado = masked.nsmallest(limit, "__dist").drop(columns="__dist")
 
     resultado = _agregar_categoria(resultado)
     return resultado[
@@ -372,11 +391,12 @@ def filtrar_fuera_bbox_por_categorias(
     n = len(sub)
     if n <= limit:
         resultado = sub
-    elif prefijos:
-        # Misma lógica que `filtrar_por_bbox`: orden estable con filtro SCIAN.
-        resultado = sub.head(limit)
     else:
-        resultado = sub.sample(n=limit, random_state=42)
+        # Priorizar UEs más cercanas al bbox. Antes se usaba `sample()` / `head()`
+        # y podía traer hospitales del otro extremo del país mientras dejaba fuera
+        # uno pegado al bbox del usuario.
+        sub = _with_distance_to_center(sub, bbox)
+        resultado = sub.nsmallest(limit, "__dist").drop(columns="__dist")
 
     out = resultado[
         ["lat", "lon", "codigo_act", "nombre_act", "nom_estab", "categoria"]
