@@ -9,7 +9,9 @@ services:
   nginx:
     image: nginx:1.27-alpine
     ports:
-      - "${PUBLIC_PORT:-8000}:80"
+      # En producción bindeamos a 127.0.0.1 para que solo el nginx del host (HTTPS)
+      # pueda acceder. Sobrescribe PUBLIC_BIND=0.0.0.0 si necesitas exponer en LAN.
+      - "${PUBLIC_BIND:-127.0.0.1}:${PUBLIC_PORT:-8000}:80"
     volumes:
       - ./docker/nginx/nginx.conf:/etc/nginx/nginx.conf:ro
     depends_on:
