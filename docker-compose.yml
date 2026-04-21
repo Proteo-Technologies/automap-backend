@@ -1,17 +1,51 @@
+# Uso:
+#   docker compose up -d --build
+# Balanceo horizontal (varias réplicas del API detrás de nginx):
+#   docker compose up -d --build --scale backend=4
+#
+# Puerto público (nginx): por defecto 8000; cambia con PUBLIC_PORT en el entorno.
+
 services:
-  api:
-    build: .
-    container_name: automap-api
-    restart: unless-stopped
+  nginx:
+    image: nginx:1.27-alpine
     ports:
-      - "8000:8000"
-    env_file:
-      - .env
+      - "${PUBLIC_PORT:-8000}:80"
+    volumes:
+      - ./docker/nginx/nginx.conf:/etc/nginx/nginx.conf:ro
+    depends_on:
+      backend:
+        condition: service_healthy
+    networks:
+      - automap
+    restart: unless-stopped
+
+  backend:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    expose:
+      - "8000"
+    environment:
+      DATA_DIR: ${DATA_DIR:-./DB}
+      ALLOWED_ORIGINS: ${ALLOWED_ORIGINS:-http://localhost:3000,http://localhost:3001}
     volumes:
       - ./DB:/app/DB:ro
+    networks:
+      - automap
+    restart: unless-stopped
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:8000/api/health"]
-      interval: 30s
-      timeout: 10s
-      retries: 3
-      start_period: 15s
+      test:
+        [
+          "CMD",
+          "python",
+          "-c",
+          "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/api/health')",
+        ]
+      interval: 15s
+      timeout: 8s
+      retries: 5
+      start_period: 45s
+
+networks:
+  automap:
+    driver: bridge
