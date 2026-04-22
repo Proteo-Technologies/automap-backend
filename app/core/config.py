@@ -48,6 +48,16 @@ class Settings(BaseSettings):
     # Cuotas auth (disponibilidad / abuso)
     rate_limit_login_per_minute: int = Field(default=15, ge=1, le=300)
     rate_limit_register_per_minute: int = Field(default=8, ge=1, le=100)
+    rate_limit_sso_per_minute: int = Field(default=30, ge=1, le=300)
+
+    # SSO con Supabase (opcional)
+    supabase_project_url: str | None = Field(default=None, validation_alias="SUPABASE_URL")
+    supabase_jwt_issuer: str | None = Field(default=None, validation_alias="SUPABASE_JWT_ISSUER")
+    supabase_jwt_audience: str = Field(default="authenticated", validation_alias="SUPABASE_JWT_AUDIENCE")
+    supabase_jwt_secret: str | None = Field(default=None, validation_alias="SUPABASE_JWT_SECRET")
+    supabase_service_role_key: str | None = Field(
+        default=None, validation_alias="SUPABASE_SERVICE_ROLE_KEY"
+    )
 
 
 @lru_cache
