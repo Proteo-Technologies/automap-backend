@@ -37,6 +37,12 @@ class User(Base):
     organization: Mapped[str] = mapped_column(String(200))
     phone: Mapped[str] = mapped_column(String(20))
     hashed_password: Mapped[str] = mapped_column(String(255))
+    supabase_user_id: Mapped[str | None] = mapped_column(
+        String(255), unique=True, index=True, nullable=True
+    )
+    auth_provider: Mapped[str] = mapped_column(
+        String(32), default="local", server_default="local", nullable=False
+    )
     is_active: Mapped[bool] = mapped_column(Boolean, default=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now()

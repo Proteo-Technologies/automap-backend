@@ -64,6 +64,10 @@ class UserLogin(BaseModel):
     password: str
 
 
+class SupabaseSSOLogin(BaseModel):
+    access_token: str = Field(min_length=20)
+
+
 class UserPublic(BaseModel):
     id: UUID
     email: str
